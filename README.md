@@ -3,6 +3,8 @@
 A **GitHub Copilot plugin for VS Code** that turns ad-hoc AI coding into a deterministic, gated, resumable workflow. This repo is a fresh rewrite tracked as a backlog of detailed, autonomous issues (epics E0–E8).
 
 > **Supported surface: GitHub Copilot in VS Code — and only that.** Copilot CLI and the Copilot cloud agent are not targets. They have a *different* hook contract (different tool names, payload keys, and output shapes), and code written to satisfy both satisfies neither: that is precisely how three of devmate's enforcement layers came to be registered, documented, and completely inert. See **[docs/hooks.md](./docs/hooks.md)**.
+>
+> **Exception — the story planner CI surface:** devmate ships a Copilot CLI-based GitHub Actions pipeline (the story planner) that reuses the planner + rubber-duck agent definitions as CLI agents. This is a CI-only surface; the VS Code plugin hook contract is unchanged. See **[docs/story-planner.md](./docs/story-planner.md)**, or adopt it with **[docs/story-planner-onboarding.md](./docs/story-planner-onboarding.md)** and the templates under **[examples/github-actions/](./examples/github-actions/)**.
 
 > **Build rules:** all code is `.mjs` ES modules with `// @ts-check` + JSDoc types, Node 24+ (engines + a runtime guard), capped tool output, and `node:test`. See **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 

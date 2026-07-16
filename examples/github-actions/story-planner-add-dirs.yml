@@ -1,0 +1,50 @@
+# Story Planner — Template B (caller checks out the context repos).
+# Copy to .github/workflows/story-planner.yml in the story repo, then replace
+# <org> and the org/repo-* entries with your own. See
+# docs/story-planner-onboarding.md for the full setup.
+#
+# Use this when you need custom checkout options (depth, submodules, a specific
+# ref) or your context repos live across orgs. You check them out into repos/
+# and pass add-dirs: repos.
+#
+# The story repo MUST be checked out at the workspace root (the default
+# actions/checkout@v4 with no `path`). Do NOT check the story repo into a
+# subfolder — the action runs from $PWD.
+name: Story Planner
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+  copilot-requests: write
+
+jobs:
+  plan:
+    if: github.event.label.name == 'ready-for-dev'
+    runs-on: ubuntu-latest
+    steps:
+      # Story repo at the workspace root — required.
+      - uses: actions/checkout@v4
+      - name: Checkout context repo B
+        uses: actions/checkout@v4
+        with:
+          repository: org/repo-b
+          token: ${{ secrets.PLANNER_TOKEN }}
+          path: repos/repo-b
+      - name: Checkout context repo C
+        uses: actions/checkout@v4
+        with:
+          repository: org/repo-c
+          token: ${{ secrets.PLANNER_TOKEN }}
+          path: repos/repo-c
+      - name: Run devmate story planner
+        uses: <org>/devmate@v1
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          planner-token: ${{ secrets.PLANNER_TOKEN }}
+          # Workspace-relative dirs already checked out by the caller.
+          add-dirs: |
+            repos
