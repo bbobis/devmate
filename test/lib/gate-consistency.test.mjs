@@ -15,6 +15,7 @@ import {
   analyzeGateConsistency,
   readTraceConsistency,
   checkGateConsistency,
+  pruneArtifactHashesForRollback,
   LANE_EVIDENCE_CHAIN,
   MALFORMED_TRACE_THRESHOLD,
 } from '../../lib/gate-consistency.mjs';
@@ -239,6 +240,89 @@ test('checkGateConsistency: off-chain gate still reports a corrupt trace', async
   const result = await checkGateConsistency(state, { root });
   assert.equal(result.ok, false);
   assert.ok(result.divergences.includes('malformed-trace'));
+});
+
+test('checkGateConsistency: a foreign-task artifact does NOT back the gate (ownership)', async () => {
+  // A router-result.json left over from a PRIOR task must not satisfy lane-set
+  // for the active task — otherwise a hand-advanced gate rides on stale trust.
+  const root = await mkdtemp(join(tmpdir(), 'gc-own-'));
+  const stateDir = join(root, '.devmate', 'state');
+  await mkdir(join(stateDir, 'trace'), { recursive: true });
+  await writeFile(
+    join(stateDir, 'router-result.json'),
+    JSON.stringify({ taskId: 'OTHER-TASK', lane: 'feature', budgetClass: 'standard', confidence: 0.95 }),
+    'utf8',
+  );
+  const state = /** @type {import('../../lib/types.mjs').TaskState} */ ({
+    taskId: 'ACTIVE-TASK',
+    lane: 'feature',
+    workflowGate: 'lane-set',
+    currentStep: 0,
+  });
+  const result = await checkGateConsistency(state, { root });
+  // lane-set is NOT backed (the router result belongs to OTHER-TASK), so the
+  // gate is ahead of its evidence and the rollback target is no-lane.
+  assert.equal(result.ok, false);
+  assert.ok(result.divergences.includes('forward'));
+  assert.equal(result.evidenceBackedGate, 'no-lane');
+});
+
+test('checkGateConsistency: the active task\'s own router artifact DOES back the gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'gc-own-'));
+  const stateDir = join(root, '.devmate', 'state');
+  await mkdir(join(stateDir, 'trace'), { recursive: true });
+  await writeFile(
+    join(stateDir, 'router-result.json'),
+    JSON.stringify({ taskId: 'ACTIVE-TASK', lane: 'feature', budgetClass: 'standard', confidence: 0.95 }),
+    'utf8',
+  );
+  const state = /** @type {import('../../lib/types.mjs').TaskState} */ ({
+    taskId: 'ACTIVE-TASK',
+    lane: 'feature',
+    workflowGate: 'lane-set',
+    currentStep: 0,
+  });
+  const result = await checkGateConsistency(state, { root });
+  assert.equal(result.ok, true);
+});
+
+test('pruneArtifactHashesForRollback: drops hashes for gates beyond the rollback target', () => {
+  const hashes = {
+    design: '.devmate/state/plan.json',
+    designDigest: 'aaa',
+    plan: '.devmate/state/plan.json',
+    planDigest: 'bbb',
+    critique: '.devmate/state/critique-result.json',
+    critiqueDigest: 'ccc',
+    spec: '.devmate/session/spec.md',
+    specDigest: 'ddd',
+  };
+  // Roll back to no-lane: nothing on the chain survives.
+  assert.deepEqual(pruneArtifactHashesForRollback(hashes, 'no-lane'), {});
+
+  // Roll back to plan-done: design/plan/critique (era plan-done) survive; spec
+  // (era spec-draft, which is LATER) is stale residue and is dropped.
+  const atPlanDone = pruneArtifactHashesForRollback(hashes, 'plan-done');
+  assert.deepEqual(atPlanDone, {
+    design: '.devmate/state/plan.json',
+    designDigest: 'aaa',
+    plan: '.devmate/state/plan.json',
+    planDigest: 'bbb',
+    critique: '.devmate/state/critique-result.json',
+    critiqueDigest: 'ccc',
+  });
+
+  // Roll back to spec-draft: everything survives.
+  assert.deepEqual(pruneArtifactHashesForRollback(hashes, 'spec-draft'), hashes);
+});
+
+test('pruneArtifactHashesForRollback: leaves unknown (non-devmate) keys untouched', () => {
+  const hashes = { custom: 'x', customDigest: 'y', spec: 's', specDigest: 'sd' };
+  // Rolling back to no-lane drops spec/specDigest but keeps the foreign keys.
+  assert.deepEqual(pruneArtifactHashesForRollback(hashes, 'no-lane'), {
+    custom: 'x',
+    customDigest: 'y',
+  });
 });
 
 test('cross-check: every LANE_EVIDENCE_CHAIN edge exists in flattenTransitions', () => {

@@ -494,7 +494,7 @@ node scripts/devmate-doctor.mjs [--root <dir>] [--fix]
 
 **Flags:**
 - `--root <dir>` — repo root (default: cwd)
-- `--fix` — reconcile a desynced `workflowGate` to the last evidence-backed gate under the state lock, stamping an audited `gate_transition` that records the reconcile. Off by default; detection alone is always non-destructive.
+- `--fix` — reconcile a desynced `workflowGate` to the last evidence-backed gate under the state lock (the consistency read, the write, and the re-check all run inside the same lock, so a concurrent writer cannot race the reconcile), stamping an audited `gate_transition` that records it and pruning stale artifact-hash trust residue for gates now behind the rollback. A divergence a rollback cannot resolve — a backward tamper whose gate is already evidence-backed, or a corrupt trace — is reported and left in place, not papered over with a no-op write; the command still exits 1 and `gateFixed` stays `false` unless the post-fix re-check is actually clean. Off by default; detection alone is always non-destructive.
 
 **Exit codes:**
 - `0` — pipeline looks healthy and the gate is evidence-backed (or was reconciled by `--fix`); domain warnings, if any, do not affect this

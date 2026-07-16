@@ -364,6 +364,93 @@ test('stale resume pointer naming a nonexistent task never crashes a hook', () =
   assert.equal(typeof up.status, 'number');
 });
 
+test('foreign-task artifact: a stale router result from another task is not evidence', () => {
+  const ws = bootstrap();
+  // A leftover router-result.json belonging to a DIFFERENT task must not back
+  // lane-set for this task — exactly the stale-evidence hole gate preconditions
+  // already close. Hand-advancing the gate to lane-set on its strength is a
+  // forward desync, not a backed gate.
+  writeRouterResult(ws.stateDir, {
+    taskId: 'some-other-task',
+    lane: 'feature',
+    budgetClass: 'standard',
+    confidence: 0.95,
+  });
+  tamperState(ws.root, { lane: 'feature', workflowGate: 'lane-set' });
+
+  const doc = runDoctor(ws.root);
+  assert.equal(doc.status, 1);
+  assert.equal(doc.summary.gateConsistency.ok, false);
+  assert.ok(doc.summary.gateConsistency.divergences.includes('forward'));
+  assert.equal(doc.summary.gateConsistency.evidenceBackedGate, 'no-lane');
+
+  // The active task's OWN router result, by contrast, backs the gate cleanly.
+  writeRouterResult(ws.stateDir, {
+    taskId: ws.taskId,
+    lane: 'feature',
+    budgetClass: 'standard',
+    confidence: 0.95,
+  });
+  const ok = runDoctor(ws.root);
+  assert.equal(ok.status, 0);
+  assert.equal(ok.summary.gateConsistency.ok, true);
+});
+
+test('backward tamper --fix: does NOT claim reconciled and exits nonzero', () => {
+  const ws = bootstrap();
+  // Gate reset behind a trace that already advanced. A rollback to the last
+  // evidence-backed gate (lane-set, which is where the gate already is) cannot
+  // fix this — the doctor must say so rather than stamp a no-op "reconcile".
+  writeRouterResult(ws.stateDir, { lane: 'feature', budgetClass: 'standard', confidence: 0.9 });
+  writeTrace(ws.stateDir, ws.taskId, [
+    gateTransition(ws.taskId, 'no-lane', 'lane-set'),
+    gateTransition(ws.taskId, 'lane-set', 'discovery-done'),
+    gateTransition(ws.taskId, 'discovery-done', 'grill-done'),
+  ]);
+  tamperState(ws.root, { lane: 'feature', workflowGate: 'lane-set' });
+
+  const fixed = runDoctor(ws.root, ['--fix']);
+  assert.equal(fixed.status, 1);
+  assert.equal(fixed.summary.gateFixed, false);
+  assert.equal(fixed.summary.gateConsistency.ok, false);
+  assert.ok(fixed.summary.gateConsistency.divergences.includes('backward'));
+  assert.match(fixed.stderr, /did NOT reconcile/);
+
+  // The gate was NOT moved and no devmate-doctor stamp was written.
+  assert.equal(readState(ws.root).workflowGate, 'lane-set');
+  const trace = readFileSync(join(ws.stateDir, 'trace', `${ws.taskId}.jsonl`), 'utf8');
+  assert.ok(!trace.includes('"actor":"devmate-doctor"'), trace);
+});
+
+test('rollback prunes stale artifactHashes: no trust residue survives --fix', () => {
+  const ws = bootstrap();
+  // Forge spec-approved with a spec on disk but stale plan/spec hashes in state
+  // and NO audited approval. --fix rolls back to no-lane; every gate-specific
+  // hash for gates beyond no-lane must be pruned so nothing later trusts them.
+  mkdirSync(join(ws.root, '.devmate', 'session'), { recursive: true });
+  writeFileSync(join(ws.root, '.devmate', 'session', 'spec.md'), '# Spec\n\nContent.\n', 'utf8');
+  tamperState(ws.root, {
+    lane: 'feature',
+    workflowGate: 'spec-approved',
+    artifactHashes: {
+      plan: '.devmate/state/plan.json',
+      planDigest: 'deadbeef',
+      spec: '.devmate/session/spec.md',
+      specDigest: 'cafef00d',
+    },
+  });
+
+  const fixed = runDoctor(ws.root, ['--fix']);
+  assert.equal(fixed.status, 0);
+  assert.equal(fixed.summary.gateFixed, true);
+
+  const state = readState(ws.root);
+  assert.equal(state.workflowGate, 'no-lane');
+  // All gate-specific hashes are gone — no stale plan/spec digest remains to be
+  // trusted by a later integrity check.
+  assert.deepEqual(state.artifactHashes, {});
+});
+
 // A parity guard: the real SessionStart and UserPromptSubmit hooks are the ones
 // actually registered in hooks/hooks.json (not stand-ins used above).
 test('the hooks under test are the registered ones', async () => {
