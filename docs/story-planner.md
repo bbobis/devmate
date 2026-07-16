@@ -121,6 +121,19 @@ The pipeline pipes a prompt to `copilot -s` (mirrors `enrich-issue.yml`).
 
 Set via the action input `invocation-mode`.
 
+## Runtime requirements (consumer side)
+
+- The action self-provisions **Node 24** (`actions/setup-node@v4`, first step)
+  and has **zero runtime npm dependencies** (`package.json` `dependencies: {}`).
+  Consumer workflows do not install Node or devmate — just `uses: <org>/devmate@v1`.
+- The `.mjs` scripts (discovery scan + merge) import only Node builtins plus
+  devmate's own relative `lib/*.mjs`; they run against the action's Node.
+  `lib/env-guard.mjs` hard-exits if Node < 24, which is why the action owns the
+  version rather than trusting the consumer's.
+- The only network install is the Copilot CLI (`npm install -g @github/copilot`).
+- Runner: `ubuntu-latest` (any GitHub-hosted runner). Self-hosted runners must
+  support `actions/setup-node@v4` and reach npm.
+
 ## Two-token auth (no GitHub App — org policy)
 
 - Built-in `GITHUB_TOKEN` + `copilot-requests: write` → the Copilot CLI request.
@@ -128,6 +141,10 @@ Set via the action input `invocation-mode`.
   Scopes: `contents: read` on all system repos, `issues: write` on the story repo.
 
 ## Consumer setup (Repo A — where stories live)
+
+> **Adopting this?** Follow **[docs/story-planner-onboarding.md](./story-planner-onboarding.md)**
+> for a step-by-step guide with copy-paste workflow templates. This section is
+> the short reference.
 
 Repo A owns the trigger and its own `PLANNER_TOKEN` secret. Minimal workflow:
 

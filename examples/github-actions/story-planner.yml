@@ -1,0 +1,34 @@
+# Story Planner — Template A (action checks out the context repos).
+# Copy to .github/workflows/story-planner.yml in the story repo, then replace
+# <org> and the org/repo-* entries with your own. See
+# docs/story-planner-onboarding.md for the full setup.
+#
+# The story repo MUST be checked out at the workspace root (the default
+# actions/checkout@v4 with no `path`). The action runs from $PWD.
+name: Story Planner
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+  copilot-requests: write
+
+jobs:
+  plan:
+    if: github.event.label.name == 'ready-for-dev'
+    runs-on: ubuntu-latest
+    steps:
+      # Story repo at the workspace root — required.
+      - uses: actions/checkout@v4
+      - name: Run devmate story planner
+        uses: <org>/devmate@v1
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          planner-token: ${{ secrets.PLANNER_TOKEN }}
+          # Newline-separated owner/name repos the action clones into repos/.
+          system-repos: |
+            org/repo-b
+            org/repo-c
