@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings",
+  "settings": [
+    {
+      "key": "chat.commandCenter.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_general-settings",
+      "description": "Controls whether to show the Chat menu in the VS Code title bar."
+    },
+    {
+      "key": "workbench.settings.showAISearchToggle",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_general-settings",
+      "description": "Enable searching settings with AI in the Settings editor."
+    },
+    {
+      "key": "chat.disableAIFeatures",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_general-settings",
+      "description": "Disable and hide built-in AI features in VS Code."
+    },
+    {
+      "key": "github.copilot.editor.enableCodeActions",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Controls if AI commands are shown as Code Actions when available."
+    },
+    {
+      "key": "github.copilot.renameSuggestions.triggerAutomatically",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Generate symbol renaming suggestions."
+    },
+    {
+      "key": "github.copilot.enable",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Enable or disable inline suggestions for specified languages."
+    },
+    {
+      "key": "github.copilot.nextEditSuggestions.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Enables next edit suggestions (NES)."
+    },
+    {
+      "key": "github.copilot.nextEditSuggestions.fixes",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Enable next edit suggestions based on diagnostics (squiggles)."
+    },
+    {
+      "key": "editor.inlineSuggest.edits.allowCodeShifting",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Configure if NES is able to shift your code to show a suggestion."
+    },
+    {
+      "key": "editor.inlineSuggest.edits.renderSideBySide",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Configure if NES can show larger suggestions side-by-side."
+    },
+    {
+      "key": "editor.inlineSuggest.edits.showCollapsed",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Show NES code changes in the editor only when you press Tab."
+    },
+    {
+      "key": "editor.inlineSuggest.fontFamily",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Configure the font family for inline completions."
+    },
+    {
+      "key": "editor.inlineSuggest.showToolbar",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Enable or disable the toolbar that appears for inline completions."
+    },
+    {
+      "key": "editor.inlineSuggest.minShowDelay",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-editing-settings",
+      "description": "Time in milliseconds to wait before showing inline suggestions."
+    },
+    {
+      "key": "github.copilot.chat.localeOverride",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Specify a locale for chat responses."
+    },
+    {
+      "key": "github.copilot.chat.useProjectTemplates",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Use relevant GitHub projects as starter projects when using /new."
+    },
+    {
+      "key": "github.copilot.chat.scopeSelection",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Whether to prompt for a specific symbol scope if you use /explain."
+    },
+    {
+      "key": "github.copilot.chat.terminalChatLocation",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Controls where chat queries from the terminal should be opened."
+    },
+    {
+      "key": "chat.detectParticipant.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable chat participant detection in the Chat view."
+    },
+    {
+      "key": "chat.checkpoints.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable or disable checkpoints in the chat."
+    },
+    {
+      "key": "chat.checkpoints.showFileChanges",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Show a summary of file changes at the end of each chat request."
+    },
+    {
+      "key": "chat.hookFilesLocations",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Configure additional hook file locations."
+    },
+    {
+      "key": "chat.useCustomAgentHooks",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable agent-scoped hooks defined in custom agent frontmatter."
+    },
+    {
+      "key": "chat.useAgentsMdFile",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable or disable using AGENTS.md files as context for chat requests."
+    },
+    {
+      "key": "chat.useClaudeMdFile",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable or disable using CLAUDE.md files as always-on custom instructions."
+    },
+    {
+      "key": "chat.utilityModel",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Override the language model used for built-in utility flows."
+    },
+    {
+      "key": "github.copilot.chat.localIndex.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable local session tracking for session insights."
+    },
+    {
+      "key": "chat.sessionSync.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_chat-settings",
+      "description": "Enable session sync to GitHub.com."
+    },
+    {
+      "key": "chat.agent.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Enable or disable using agents."
+    },
+    {
+      "key": "chat.agent.maxRequests",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Maximum number of requests that the agent can make."
+    },
+    {
+      "key": "github.copilot.chat.agent.autoFix",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Automatically diagnose and fix issues in the generated code changes."
+    },
+    {
+      "key": "chat.mcp.access",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Manage which MCP servers can be used in VS Code."
+    },
+    {
+      "key": "chat.mcp.discovery.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Configure automatic discovery of MCP server configuration from other applications."
+    },
+    {
+      "key": "chat.tools.terminal.autoApprove",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Control which terminal commands are auto-approved when using agents."
+    },
+    {
+      "key": "chat.tools.terminal.enableAutoApprove",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Enable or disable automatic approval of terminal commands."
+    },
+    {
+      "key": "chat.tools.edits.autoApprove",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Configure which files require approval before edits are applied."
+    },
+    {
+      "key": "chat.tools.global.autoApprove",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Automatically approve all tools."
+    },
+    {
+      "key": "chat.tools.urls.autoApprove",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Control which URL requests and responses are auto-approved."
+    },
+    {
+      "key": "chat.permissions.default",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Set the default permission level for new chat sessions."
+    },
+    {
+      "key": "chat.agent.sandbox.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Enable sandboxing for agent commands (macOS and Linux only)."
+    },
+    {
+      "key": "github.copilot.chat.additionalReadAccessFolders",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-settings",
+      "description": "Grant read-only access to additional folders outside the current workspace."
+    },
+    {
+      "key": "inlineChat.defaultModel",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_inline-chat-settings",
+      "description": "Configure the default language model for editor inline chat."
+    },
+    {
+      "key": "inlineChat.askInChat",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_inline-chat-settings",
+      "description": "Use Ask in Chat in the Chat view for files in active chat editing session."
+    },
+    {
+      "key": "inlineChat.finishOnType",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_inline-chat-settings",
+      "description": "Finish an editor inline chat session when typing outside of changed regions."
+    },
+    {
+      "key": "inlineChat.holdToSpeech",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_inline-chat-settings",
+      "description": "Holding the editor inline chat keyboard shortcut automatically enables speech recognition."
+    },
+    {
+      "key": "editor.inlineSuggest.syntaxHighlightingEnabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_inline-chat-settings",
+      "description": "Show syntax highlighting for inline suggestions."
+    },
+    {
+      "key": "github.copilot.chat.reviewSelection.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-review-settings",
+      "description": "Enable code review with AI for an editor text selection."
+    },
+    {
+      "key": "github.copilot.chat.reviewSelection.instructions",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_code-review-settings",
+      "description": "Custom instructions for reviewing the current editor selection with AI."
+    },
+    {
+      "key": "git.addAICoAuthor",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_source-control-settings",
+      "description": "Append a Co-authored-by Git trailer to commit messages for AI-generated changes."
+    },
+    {
+      "key": "chat.instructionsFilesLocations",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-instructions-settings",
+      "description": "Locations to search for custom instructions files."
+    },
+    {
+      "key": "chat.includeApplyingInstructions",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-instructions-settings",
+      "description": "Automatically add instruction files with a matching applyTo pattern to chat requests."
+    },
+    {
+      "key": "chat.includeReferencedInstructions",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-instructions-settings",
+      "description": "Automatically add instruction files referenced via Markdown links to chat requests."
+    },
+    {
+      "key": "github.copilot.chat.codeGeneration.useInstructionFiles",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-instructions-settings",
+      "description": "Automatically add custom instructions from .github/copilot-instructions.md."
+    },
+    {
+      "key": "github.copilot.chat.organizationInstructions.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-instructions-settings",
+      "description": "Enable discovery of custom instructions defined at the GitHub organization level."
+    },
+    {
+      "key": "chat.useCustomizationsInParentRepositories",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-instructions-settings",
+      "description": "Enable discovery of agent customizations in parent repository folders."
+    },
+    {
+      "key": "chat.promptFilesLocations",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_reusable-prompt-files-settings",
+      "description": "Locations to search for prompt files."
+    },
+    {
+      "key": "chat.agentFilesLocations",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-agents-settings",
+      "description": "Locations to search for custom agent files."
+    },
+    {
+      "key": "github.copilot.chat.organizationCustomAgents.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_custom-agents-settings",
+      "description": "Enable discovery of custom agents defined at the GitHub organization level."
+    },
+    {
+      "key": "chat.useAgentSkills",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-skills-settings",
+      "description": "Enable support for agent skills in VS Code."
+    },
+    {
+      "key": "chat.agentSkillsLocations",
+      "evidenceUrl": "https://code.visualstudio.com/docs/agents/reference/ai-settings#_agent-skills-settings",
+      "description": "Locations to search for agent skills."
+    },
+    {
+      "key": "chat.subagents.allowInvocationsFromSubagents",
+      "evidenceUrl": "https://code.visualstudio.com/docs/copilot/agents/subagents",
+      "description": "Allow subagents to invoke further subagents (nested subagents, max depth 5). Off by default."
+    },
+    {
+      "key": "chat.customAgentInSubagent.enabled",
+      "evidenceUrl": "https://code.visualstudio.com/updates/v1_107#_run-agents-as-subagents-experimental",
+      "description": "Allow custom .agent.md agents to be invoked as subagents. Experimental; off by default."
+    }
+  ]
+}

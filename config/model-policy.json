@@ -1,0 +1,25 @@
+{
+  "_comment": "E8-4 model/budget policy. Model IDs here are [UNVERIFIED] placeholders. DO NOT commit a real modelId without (1) a verifiedAt ISO date, (2) a source URL pointing at official provider docs confirming the ID, and (3) an eval baseline at evals/model-routing/baseline-<class>.json (for roles: baseline-<role-slug>.json, e.g. baseline-discovery-worker.json). See docs/model-policy.md.",
+  "schemaVersion": 1,
+  "byBudgetClass": {
+    "tiny": {
+      "modelId": "[UNVERIFIED — set after confirming with official docs]",
+      "verifiedAt": null
+    },
+    "standard": {
+      "modelId": "[UNVERIFIED — set after confirming with official docs]",
+      "verifiedAt": null
+    },
+    "large": {
+      "modelId": "[UNVERIFIED — set after confirming with official docs]",
+      "verifiedAt": null
+    }
+  },
+  "roles": {
+    "discoveryWorker": {
+      "modelId": "[UNVERIFIED — set after confirming with official docs]",
+      "verifiedAt": null,
+      "rationale": "read-only search; cheapest capable model"
+    }
+  }
+}

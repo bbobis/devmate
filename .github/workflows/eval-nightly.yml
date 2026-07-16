@@ -1,0 +1,51 @@
+# E9-25: opt-in LLM-judge eval tier. Deliberately a SEPARATE, non-required
+# workflow: the judge scores dimensions code cannot verify (claim truth, AC
+# testability) and must never gate per-commit CI. Runs nightly (and on
+# demand); uploads the judge artifact for inspection.
+name: eval-nightly
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  judge:
+    name: LLM-judge evals (opt-in, non-required)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Match the project's engines field (Node 24 Active LTS).
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # Opt in explicitly. Without a verified judge model in
+      # config/model-policy.json (and an API client + secret), verdicts are
+      # honest nulls ("Unknown") and the artifact records why.
+      - name: Run LLM-judge evals
+        run: node scripts/eval-judge.mjs
+        env:
+          DEVMATE_JUDGE: '1'
+          DEVMATE_JUDGE_API_KEY: ${{ secrets.DEVMATE_JUDGE_API_KEY }}
+
+      - name: Upload judge results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: judge-eval-results
+          path: evals/issue-quality/judge-latest.json

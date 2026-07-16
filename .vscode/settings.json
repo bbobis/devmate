@@ -1,0 +1,27 @@
+{
+  // devmate ships hooks/skills that run bundled .mjs scripts via:
+  //   node "${PLUGIN_ROOT}/scripts/<name>.mjs"
+  // By default VS Code asks you to approve each terminal command. The
+  // chat.tools.terminal.autoApprove setting lets you pre-approve only the
+  // devmate scripts so you are not prompted on every run.
+  //
+  // Doc: https://code.visualstudio.com/docs/agents/reference/ai-settings
+  //      https://code.visualstudio.com/docs/agents/approvals
+  //
+  // The key below is a regex (slashes => regex). It matches `node ... .mjs`
+  // commands whose path contains PLUGIN_ROOT, i.e. devmate scripts.
+  // Adjust or remove if you do not want auto-approval.
+  "chat.tools.terminal.autoApprove": {
+    "/^node\\b.*PLUGIN_ROOT.*\\.mjs/": true
+  },
+  // Required for the orchestrator's parallel @discovery/@tech-design dispatch and
+  // for @fullstack self-dispatch per persona. Ships here so contributors get correct
+  // behaviour by default rather than hitting a silent failure mode (P3 fail-closed).
+  // Docs: https://code.visualstudio.com/docs/agents/subagents#_nested-subagents
+  "chat.subagents.allowInvocationsFromSubagents": true,
+  // Required so custom .agent.md agents (e.g. @discovery, @tech-design) can be
+  // invoked as subagents at all — without it, custom-agent subagent dispatch
+  // silently no-ops even with allowInvocationsFromSubagents enabled above.
+  // Docs: https://code.visualstudio.com/updates/v1_107#_run-agents-as-subagents-experimental
+  "chat.customAgentInSubagent.enabled": true
+}

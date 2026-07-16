@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "devmate-memory": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/mcp/memory-server.mjs"]
+    }
+  }
+}

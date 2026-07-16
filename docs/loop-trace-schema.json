@@ -1,0 +1,158 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AnyLoopEvent",
+  "description": "A single line in a loop trace JSONL file.",
+  "oneOf": [
+    {
+      "description": "LoopAttemptEvent",
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "type",
+        "attemptId",
+        "taskId",
+        "ts",
+        "tier",
+        "command",
+        "exitCode",
+        "outputDigest",
+        "fullOutputPath"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "loop_attempt"
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ts": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "type": "number"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exitCode": {
+          "type": "number"
+        },
+        "outputDigest": {
+          "type": "string"
+        },
+        "fullOutputPath": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "description": "LoopHaltEvent",
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "type",
+        "attemptId",
+        "taskId",
+        "ts",
+        "reason",
+        "lastError",
+        "priorAttemptId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "loop_halt"
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ts": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "lastError": {
+          "type": "string"
+        },
+        "priorAttemptId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "description": "LoopStepCompleteEvent",
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "type",
+        "attemptId",
+        "taskId",
+        "ts",
+        "stepLabel",
+        "artifactPaths"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "step_complete"
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ts": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepLabel": {
+          "type": "string"
+        },
+        "artifactPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  ]
+}

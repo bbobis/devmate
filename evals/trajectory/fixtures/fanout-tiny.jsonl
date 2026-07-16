@@ -1,0 +1,4 @@
+{"type":"gate_transition","taskId":"traj-fanout-tny","stepId":"gatectl","ts":"2026-07-01T00:00:00.000Z","schemaVersion":1,"from":"no-lane","to":"lane-set","gate":"lane-set"}
+{"type":"subagent_start","taskId":"traj-fanout-tny","stepId":"discovery-single","ts":"2026-07-01T00:02:00.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","activeCount":1}
+{"type":"subagent_complete","taskId":"traj-fanout-tny","stepId":"discovery-single","ts":"2026-07-01T00:04:00.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","durationMs":120000,"activeCount":0}
+{"type":"gate_transition","taskId":"traj-fanout-tny","stepId":"gatectl","ts":"2026-07-01T00:05:00.000Z","schemaVersion":1,"from":"lane-set","to":"discovery-done","gate":"discovery-done"}

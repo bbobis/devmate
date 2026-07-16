@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "node ./scripts/posttool-regex-guard.mjs",
+        "windows": "node .\\scripts\\posttool-regex-guard.mjs",
+        "timeout": 20
+      }
+    ]
+  }
+}

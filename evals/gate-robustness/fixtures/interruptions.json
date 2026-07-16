@@ -1,0 +1,114 @@
+{
+  "_comment": "E10-07 interruption suite (R8 item 2): mid-workflow scope change, question-at-gate, new-task-at-gate, and abandon-at-gate. Each case names the E10-05 steering edge the interruption must take (null for read-only questions) and the end gate task.json must record. Park-or-abandon confirmation (E10-01) is presumed resolved by the phrasing itself: new-task cases carry an explicit park choice and abandon cases are unambiguous. Synthetic fixtures; no exact hook phrases.",
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "scope-change-oauth",
+      "kind": "scope-change",
+      "gate": "impl-started",
+      "expected": "steer",
+      "steeringEvent": "revise-scope",
+      "endGate": "spec-draft",
+      "phrasing": "actually — we also need OAuth login, fold that into the scope"
+    },
+    {
+      "id": "scope-change-csv",
+      "kind": "scope-change",
+      "gate": "impl-started",
+      "expected": "steer",
+      "steeringEvent": "revise-scope",
+      "endGate": "spec-draft",
+      "phrasing": "scope change: exports must support CSV too"
+    },
+    {
+      "id": "scope-change-legacy-table",
+      "kind": "scope-change",
+      "gate": "impl-started",
+      "expected": "steer",
+      "steeringEvent": "revise-scope",
+      "endGate": "spec-draft",
+      "phrasing": "we need to also migrate the legacy table — rescope please"
+    },
+    {
+      "id": "question-spec-location",
+      "kind": "question",
+      "gate": "spec-draft",
+      "expected": "question",
+      "steeringEvent": null,
+      "endGate": "spec-draft",
+      "phrasing": "which file does the spec live in?"
+    },
+    {
+      "id": "question-why-fs-cache",
+      "kind": "question",
+      "gate": "spec-draft",
+      "expected": "question",
+      "steeringEvent": null,
+      "endGate": "spec-draft",
+      "phrasing": "can you explain why we chose the fs cache?"
+    },
+    {
+      "id": "question-run-verification",
+      "kind": "question",
+      "gate": "spec-draft",
+      "expected": "question",
+      "steeringEvent": null,
+      "endGate": "spec-draft",
+      "phrasing": "how do I run the verification step myself?"
+    },
+    {
+      "id": "new-task-login-500",
+      "kind": "new-task",
+      "gate": "spec-draft",
+      "expected": "steer",
+      "steeringEvent": "park",
+      "endGate": "parked",
+      "phrasing": "park this for now — different task: the login page is 500ing"
+    },
+    {
+      "id": "new-task-billing-bug",
+      "kind": "new-task",
+      "gate": "spec-draft",
+      "expected": "steer",
+      "steeringEvent": "park",
+      "endGate": "parked",
+      "phrasing": "pause this one, I need a separate task for the billing bug"
+    },
+    {
+      "id": "new-task-deploy-docs",
+      "kind": "new-task",
+      "gate": "spec-draft",
+      "expected": "steer",
+      "steeringEvent": "park",
+      "endGate": "parked",
+      "phrasing": "switch gears: new task — update the deploy docs"
+    },
+    {
+      "id": "abandon-not-needed",
+      "kind": "abandon",
+      "gate": "spec-draft",
+      "expected": "abandon",
+      "steeringEvent": "abandon",
+      "endGate": "abandoned",
+      "phrasing": "abandon this task, we don't need it anymore"
+    },
+    {
+      "id": "abandon-another-direction",
+      "kind": "abandon",
+      "gate": "spec-draft",
+      "expected": "abandon",
+      "steeringEvent": "abandon",
+      "endGate": "abandoned",
+      "phrasing": "scrap this whole thing, we're going another direction"
+    },
+    {
+      "id": "abandon-obsolete",
+      "kind": "abandon",
+      "gate": "spec-draft",
+      "expected": "abandon",
+      "steeringEvent": "abandon",
+      "endGate": "abandoned",
+      "phrasing": "drop this task — it's obsolete now"
+    }
+  ]
+}

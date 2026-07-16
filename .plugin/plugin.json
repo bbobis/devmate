@@ -1,0 +1,9 @@
+{
+  "name": "devmate",
+  "description": "Deterministic, gated, resumable GitHub Copilot workflow (agents, hooks, skills).",
+  "version": "0.0.1",
+  "author": { "name": "bobisb" },
+  "agents": "agents/",
+  "skills": "skills/",
+  "hooks": "hooks/hooks.json"
+}

@@ -1,0 +1,12 @@
+{
+  "handshakeVersion": 2,
+  "description": "Shared session-handshake corpus. Kept byte-identical between devmate and monoroot. Every fixture is exercised by BOTH sides: must-accept files parse to a handshake on the consumer (parseSessionHandshake) and validate on the producer (isValidSession), so they carry the full producer shape; must-reject files break a shared handshake field (schemaVersion or the devmate block) so both sides reject them — producer-only strictness (e.g. a missing branchName) deliberately has no fixture here.",
+  "mustAccept": ["session-v2.json", "session-v2-extra-fields.json"],
+  "mustReject": [
+    "wrong-schema-version.json",
+    "missing-devmate-block.json",
+    "missing-primary.json",
+    "non-string-config-path.json",
+    "wrong-mode.json"
+  ]
+}

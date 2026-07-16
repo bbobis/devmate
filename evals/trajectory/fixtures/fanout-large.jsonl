@@ -1,0 +1,11 @@
+{"type":"gate_transition","taskId":"traj-fanout-lrg","stepId":"gatectl","ts":"2026-07-01T00:00:00.000Z","schemaVersion":1,"from":"no-lane","to":"lane-set","gate":"lane-set"}
+{"type":"subagent_start","taskId":"traj-fanout-lrg","stepId":"discovery-worker-1","ts":"2026-07-01T00:02:00.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","activeCount":1}
+{"type":"subagent_start","taskId":"traj-fanout-lrg","stepId":"discovery-worker-2","ts":"2026-07-01T00:02:05.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","activeCount":2}
+{"type":"subagent_start","taskId":"traj-fanout-lrg","stepId":"tech-design","ts":"2026-07-01T00:02:10.000Z","schemaVersion":1,"agentName":"tech-design","persona":"unknown","activeCount":3}
+{"type":"subagent_complete","taskId":"traj-fanout-lrg","stepId":"discovery-worker-1","ts":"2026-07-01T00:03:30.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","durationMs":90000,"activeCount":2}
+{"type":"subagent_start","taskId":"traj-fanout-lrg","stepId":"discovery-worker-3","ts":"2026-07-01T00:03:35.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","activeCount":3}
+{"type":"subagent_complete","taskId":"traj-fanout-lrg","stepId":"discovery-worker-2","ts":"2026-07-01T00:04:30.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","durationMs":145000,"activeCount":2}
+{"type":"subagent_complete","taskId":"traj-fanout-lrg","stepId":"discovery-worker-3","ts":"2026-07-01T00:05:00.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","durationMs":85000,"activeCount":1}
+{"type":"subagent_complete","taskId":"traj-fanout-lrg","stepId":"tech-design","ts":"2026-07-01T00:05:10.000Z","schemaVersion":1,"agentName":"tech-design","persona":"unknown","durationMs":180000,"activeCount":0}
+{"type":"discovery_merge","taskId":"traj-fanout-lrg","stepId":"merge-discovery","ts":"2026-07-01T00:05:40.000Z","schemaVersion":1,"inputs":3,"merged":10,"dropped":2,"conflicts":0}
+{"type":"gate_transition","taskId":"traj-fanout-lrg","stepId":"gatectl","ts":"2026-07-01T00:06:00.000Z","schemaVersion":1,"from":"lane-set","to":"discovery-done","gate":"discovery-done"}

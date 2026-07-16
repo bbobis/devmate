@@ -1,0 +1,24 @@
+{
+  "contractVersion": 4,
+  "description": "Shared config-contract corpus. Kept byte-identical between devmate and monoroot. Every fixture carries a scope tag naming who must exercise it: 'both' = the consumer validator AND the producer structural predicate; 'consumer' = devmate's validator only (the producer test skips it explicitly via this tag, never silently); 'producer-merge' = the consumer rejects it via its validator while the producer proves the rejection through its merge step (which throws) rather than its structural predicate. must-accept files validate; must-reject files fail with an error containing the mapped substring (the consumer-side message).",
+  "mustAccept": {
+    "single-root-v1.json": { "scope": "consumer" },
+    "multi-root-v2.json": { "scope": "both" },
+    "multi-root-with-fallback.json": { "scope": "both" },
+    "multi-root-with-verification.json": { "scope": "both" },
+    "verification-checks-v2.json": { "scope": "consumer" },
+    "session-artifact-policy.json": { "scope": "both" }
+  },
+  "mustReject": {
+    "empty-personas.json": { "scope": "both", "error": "non-empty personas array" },
+    "too-new-version.json": { "scope": "both", "error": "newer than this devmate build" },
+    "multi-root-missing-repo.json": { "scope": "both", "error": "repo must be a non-empty string in multi-root mode" },
+    "multi-root-missing-primary.json": { "scope": "both", "error": "primary must be a non-empty string in multi-root mode" },
+    "multi-root-missing-repos.json": { "scope": "both", "error": "repos must be a non-empty array of strings in multi-root mode" },
+    "duplicate-persona.json": { "scope": "producer-merge", "error": "duplicate persona" },
+    "bad-source.json": { "scope": "both", "error": "source must be 'repo' or 'fallback'" },
+    "bad-check.json": { "scope": "consumer", "error": "verification.checks[0].command must be a non-empty string" },
+    "session-artifact-paths-empty.json": { "scope": "both", "error": "sessionArtifactPaths[1] must be a non-empty string" },
+    "session-artifact-writers-no-agents.json": { "scope": "both", "error": "sessionArtifactWriters[0].agents must be an array of agent names" }
+  }
+}

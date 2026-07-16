@@ -1,0 +1,10 @@
+{
+  "_comment": "Skill-matching corpus for pragmatic-programmer. Twin self-nuke: trigger 'write code' killed by negative 'write docs'.",
+  "schemaVersion": 1,
+  "skillId": "pragmatic-programmer",
+  "cases": [
+    { "phrasing": "write code to sort the list", "expect": "match", "bucket": "negative" },
+    { "phrasing": "make this module easier to change", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "research the best approach first", "expect": "no-match", "bucket": "negative" }
+  ]
+}

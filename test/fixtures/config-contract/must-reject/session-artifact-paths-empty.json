@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 2,
+  "contractVersion": 4,
+  "mode": "multi-root",
+  "primary": "api",
+  "repos": ["api"],
+  "personas": [
+    { "persona": "api-dev", "repo": "api", "editableGlobs": ["src/**"], "source": "repo" }
+  ],
+  "sessionArtifactPaths": [".devmate/state/**", ""]
+}

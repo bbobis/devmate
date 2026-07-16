@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "mode": "multi-root",
+  "primary": "a",
+  "repos": ["a", "b"],
+  "personas": [
+    { "persona": "dev", "repo": "a", "editableGlobs": ["a/**"] },
+    { "persona": "dev", "repo": "b", "editableGlobs": ["b/**"] }
+  ]
+}

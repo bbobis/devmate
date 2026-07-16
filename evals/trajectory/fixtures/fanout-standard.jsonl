@@ -1,0 +1,9 @@
+{"type":"gate_transition","taskId":"traj-fanout-std","stepId":"gatectl","ts":"2026-07-01T00:00:00.000Z","schemaVersion":1,"from":"no-lane","to":"lane-set","gate":"lane-set"}
+{"type":"subagent_start","taskId":"traj-fanout-std","stepId":"discovery-worker-1","ts":"2026-07-01T00:02:00.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","activeCount":1}
+{"type":"subagent_start","taskId":"traj-fanout-std","stepId":"discovery-worker-2","ts":"2026-07-01T00:02:05.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","activeCount":2}
+{"type":"subagent_start","taskId":"traj-fanout-std","stepId":"tech-design","ts":"2026-07-01T00:02:10.000Z","schemaVersion":1,"agentName":"tech-design","persona":"unknown","activeCount":3}
+{"type":"subagent_complete","taskId":"traj-fanout-std","stepId":"discovery-worker-1","ts":"2026-07-01T00:04:00.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","durationMs":120000,"activeCount":2}
+{"type":"subagent_complete","taskId":"traj-fanout-std","stepId":"discovery-worker-2","ts":"2026-07-01T00:04:30.000Z","schemaVersion":1,"agentName":"discovery","persona":"unknown","durationMs":145000,"activeCount":1}
+{"type":"subagent_complete","taskId":"traj-fanout-std","stepId":"tech-design","ts":"2026-07-01T00:05:00.000Z","schemaVersion":1,"agentName":"tech-design","persona":"unknown","durationMs":170000,"activeCount":0}
+{"type":"discovery_merge","taskId":"traj-fanout-std","stepId":"merge-discovery","ts":"2026-07-01T00:05:30.000Z","schemaVersion":1,"inputs":2,"merged":8,"dropped":1,"conflicts":1}
+{"type":"gate_transition","taskId":"traj-fanout-std","stepId":"gatectl","ts":"2026-07-01T00:06:00.000Z","schemaVersion":1,"from":"lane-set","to":"discovery-done","gate":"discovery-done"}

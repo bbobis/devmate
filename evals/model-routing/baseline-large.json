@@ -1,0 +1,11 @@
+{
+  "_comment": "TODO: populate metrics once verified model IDs land (E9-11) — schema-only placeholder",
+  "budgetClass": "large",
+  "recordedAt": "2026-07-03T21:46:52.984Z",
+  "taskSetHash": "4ed022654527dcd025358d31c402a4f6b3292d91e35e0d5b520cb423ee05a645",
+  "taskCount": 2,
+  "metrics": {
+    "costUsd": 0,
+    "qualityScore": 0
+  }
+}

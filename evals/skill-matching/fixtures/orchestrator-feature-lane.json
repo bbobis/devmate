@@ -1,0 +1,13 @@
+{
+  "_comment": "Skill-matching corpus for orchestrator-feature-lane. Its negative 'fix bug' contributes token 'fix', which excludes feature work that also mentions a fix.",
+  "schemaVersion": 1,
+  "skillId": "orchestrator-feature-lane",
+  "cases": [
+    { "phrasing": "add a new page for settings", "expect": "match", "bucket": "exact" },
+    { "phrasing": "build a new export screen and fix the header spacing", "expect": "match", "bucket": "negative" },
+    { "phrasing": "let users download their invoices as PDF", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "there is a bug in the login flow", "expect": "no-match", "bucket": "negative" },
+    { "phrasing": "allow exporting invoices to PDF", "expect": "match", "bucket": "state-rescue", "context": { "lane": "feature", "gate": "impl-started" } },
+    { "phrasing": "the login button is unresponsive", "expect": "no-match", "bucket": "state-rescue", "context": { "lane": "bug", "gate": "impl-started" } }
+  ]
+}

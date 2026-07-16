@@ -1,0 +1,12 @@
+{
+  "_comment": "Skill-matching corpus for orchestrator-bug-lane. The 'test' token in its negatives ('unit test','write test') hard-excludes ordinary bug reports that mention a test.",
+  "schemaVersion": 1,
+  "skillId": "orchestrator-bug-lane",
+  "cases": [
+    { "phrasing": "there is a bug in checkout", "expect": "match", "bucket": "exact" },
+    { "phrasing": "the checkout test is broken", "expect": "match", "bucket": "negative" },
+    { "phrasing": "the app throws an exception on save", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "add a new feature to the dashboard", "expect": "no-match", "bucket": "negative" },
+    { "phrasing": "it comes back empty when I click through", "expect": "match", "bucket": "state-rescue", "context": { "lane": "bug", "gate": "impl-started" } }
+  ]
+}

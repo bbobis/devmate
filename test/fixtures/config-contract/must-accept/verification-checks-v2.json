@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "personas": [
+    { "persona": "backend", "editableGlobs": ["src/**", "lib/**"] }
+  ],
+  "verification": {
+    "checks": [
+      { "id": "unit-test", "command": "npm test", "category": "unit-test" },
+      { "id": "type-check", "command": "npm run typecheck", "category": "type-check" },
+      { "id": "dep-audit", "command": "npm audit --audit-level=high", "category": "audit", "optional": true, "source": "package.json#scripts" }
+    ],
+    "unitTest": "npm test"
+  }
+}

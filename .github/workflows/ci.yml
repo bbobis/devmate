@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: verify (lint + typecheck + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail if any tracked file is not normalized to LF per .gitattributes.
+      # Line endings otherwise depend on each contributor's core.autocrlf, so a
+      # Windows commit could ship CRLF that breaks line-ending-sensitive tests on
+      # Linux (and vice-versa). `git add --renormalize` re-applies the .gitattributes
+      # clean filter; any resulting staged diff means CRLF slipped into a commit.
+      - name: Check line endings (LF enforced by .gitattributes)
+        run: |
+          git add --renormalize .
+          if ! git diff --cached --quiet; then
+            echo "::error::Tracked files are not LF-normalized. Run 'git add --renormalize .' and commit."
+            git diff --cached --name-only
+            exit 1
+          fi
+
+      # Match the project's engines field (Node 24 Active LTS).
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # Single source of truth: the SAME command contributors run locally.
+      # package.json "verify" = lint (eslint-plugin-n, Node-target aware) + typecheck (tsc) + tests (node:test).
+      - name: Verify (npm run verify)
+        run: npm run verify
+
+      # Fail if any file hardcodes a non-canonical memory path (E0-5).
+      - name: Check canonical memory path references
+        run: node scripts/check-memory-path-refs.mjs
+
+      # Regenerate docs/CURRENT_BEHAVIOR.md from verified metadata and fail if it
+      # drifts from what is committed (E0-6).
+      - name: Generate current behavior reference
+        run: |
+          node scripts/generate-current-behavior.mjs
+          git diff --exit-code -- docs/CURRENT_BEHAVIOR.md
+
+      # Fail if docs assert hook events, config keys, or state names that are not
+      # in verified ground truth (E0-6).
+      - name: Check docs/behavior drift
+        run: node scripts/check-docs-drift.mjs
+
+      # Fail if any agent file has a frontmatter/body capability mismatch (E0-7).
+      - name: Validate agent capability consistency
+        run: node scripts/validate-agents.mjs
+
+      # Fail if any worker-return artifact violates the WorkerReturn contract (E4-8).
+      - name: Check worker return contracts
+        run: npm run worker-contract-check
+
+      - name: Check agent artifact contracts
+        run: npm run check-contracts
+
+      # Live-repo guard wiring (E9-02): every script docs/SCRIPTS.md labels
+      # "CI Guard" must actually run against the repository, not only its
+      # tmpdir unit-test fixtures.
+
+      # Fail if any file in the watched dirs is missing from the artifact allowlist.
+      - name: Check artifact allowlist
+        run: node scripts/check-artifact-allowlist.mjs
+
+      # Report backend readiness predicates (skips cleanly when none configured).
+      - name: Check backend readiness predicates
+        run: node scripts/check-backend-ready.mjs
+
+      # Fail if any agent/skill/protocol file exceeds its line/token budget.
+      - name: Check per-file budgets
+        run: node scripts/check-file-budgets.mjs
+
+      # Fail if any sentinel-delimited generated doc block is stale.
+      - name: Check generated docs freshness
+        run: node scripts/check-generated-docs.mjs
+
+      # Fail if any watched settings file uses a key not in verified ground truth.
+      - name: Check settings keys
+        run: node scripts/check-settings-keys.mjs
+
+      # Fail if the model policy commits a real model ID without verification.
+      - name: Validate model policy
+        run: node scripts/validate-model-policy.mjs
+
+      # Fail if any skill trigger stub exceeds its line budget.
+      - name: Validate skill split
+        run: node scripts/validate-skill-split.mjs
+
+      # Fail if any model-routing baseline is missing, malformed, or stale (E9-22).
+      - name: Validate model-routing baselines
+        run: node scripts/eval-model-routing.mjs
+
+      # Run the issue-quality evals and publish the results as a build artifact.
+      - name: Run issue-quality evals
+        run: npm run eval:issue-quality
+
+      - name: Upload issue-quality eval results
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-quality-eval-results
+          path: evals/issue-quality/results-latest.json
+
+      # E9-24: run every regression suite via the index and publish the
+      # summary artifact alongside the issue-quality results.
+      - name: Run regression suites
+        run: node scripts/run-regressions.mjs
+
+      - name: Upload regression summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-summary
+          path: evals/regression-summary.json
+
+  hooks-smoke:
+    name: hooks smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Validate hook command contracts
+        run: >-
+          node --test
+          test/lib/hooks/registry.test.mjs
+          test/scripts/validate-hooks.test.mjs
+          test/regression/hook-registration.test.mjs
+          test/hooks/hook-spawn.smoke.test.mjs

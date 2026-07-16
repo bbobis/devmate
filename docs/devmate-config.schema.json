@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/LP-GTM-Product-Engineering/monoroot/blob/main/schema/devmate-config.schema.json",
+  "title": "devmate config",
+  "$comment": "Shared contract between devmate (consumer / eyes) and monoroot (producer / hands). The extension is the sole writer of the merged multi-root config; devmate reads and validates. Versioning policy: additive fields do NOT bump schemaVersion; only a breaking restructure does. `source`/`synthesized`/`contractVersion` are additive and stay at schemaVersion 2. Runtime validation on both sides is hand-written (devmate has zero runtime deps); the executable agreement between the two validators is the shared fixtures corpus in test/fixtures/config-contract, pinned by contractVersion. Keep this file byte-identical between the two repos when the contract changes.",
+  "type": "object",
+  "required": ["schemaVersion", "personas"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [1, 2],
+      "description": "1 = single-repo config authored by `devmate init`; 2 = merged multi-root config written by the extension."
+    },
+    "contractVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Producer-stamped version of the shared config contract (this schema + the fixtures corpus) the merged config was written against. Additive — never bumps schemaVersion. The consumer compares it against its own pinned contract version and emits a non-blocking skew nudge on mismatch."
+    },
+    "mode": {
+      "const": "multi-root",
+      "description": "Structural discriminator. Absent = single-root. Never coupled to schemaVersion."
+    },
+    "primary": {
+      "type": "string",
+      "description": "Multi-root only — name of the primary repo (must appear in repos)."
+    },
+    "repos": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Multi-root only — repo subdirectory names that make up the workspace."
+    },
+    "personas": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Edit-boundary owners. Never empty — the producer synthesizes a fallback persona for any un-init'd repo.",
+      "items": {
+        "type": "object",
+        "required": ["persona", "editableGlobs"],
+        "additionalProperties": true,
+        "properties": {
+          "persona": { "type": "string", "minLength": 1 },
+          "editableGlobs": { "type": "array", "items": { "type": "string" } },
+          "offLimitsGlobs": { "type": "array", "items": { "type": "string" } },
+          "testGlobs": { "type": "array", "items": { "type": "string" } },
+          "instructionFile": { "type": ["string", "null"] },
+          "repo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Multi-root only — the sub-repo subdirectory this persona targets. Globs are anchored against it."
+          },
+          "source": {
+            "enum": ["repo", "fallback"],
+            "description": "Producer provenance stamp. 'repo' = authored in a sub-repo's config; 'fallback' = synthesized for an un-init'd repo."
+          },
+          "synthesized": {
+            "type": "boolean",
+            "description": "True when the producer invented this persona because the repo had no usable config. Pairs with source === 'fallback'."
+          }
+        }
+      }
+    },
+    "domains": {
+      "type": "array",
+      "description": "DN-1: optional business-domain ownership map — maps a task's business vocabulary to the file clusters and invariants of that domain. Absent = today's behavior (no-op).",
+      "items": {
+        "type": "object",
+        "required": ["domain", "keywords", "globs"],
+        "additionalProperties": false,
+        "properties": {
+          "domain": { "type": "string", "minLength": 1, "description": "Unique id, kebab-case (e.g. 'billing')." },
+          "keywords": { "type": "array", "items": { "type": "string" }, "description": "Business vocabulary for lexical matching (lowercase)." },
+          "globs": { "type": "array", "items": { "type": "string" }, "description": "Repo-relative globs owning this domain's files." },
+          "contextFile": { "type": ["string", "null"], "description": "Repo-relative path to the domain context markdown, or null." },
+          "relatedDomains": { "type": "array", "items": { "type": "string" }, "description": "Ids of adjacent domains (cross-domain contracts)." },
+          "entryPoints": { "type": "array", "items": { "type": "string" }, "description": "Repo-relative FILE paths that anchor the domain (not symbols)." }
+        }
+      }
+    },
+    "testGlobs": { "type": "array", "items": { "type": "string" } },
+    "maxConcurrentAgents": { "type": "integer", "minimum": 1 },
+    "sessionArtifactPaths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "pattern": "\\S" },
+      "description": "Globs of session artifacts no agent may hand-edit — gate state, the human-approved spec, the evidence chain. Absent = the protective default ['.devmate/state/**', '.devmate/session/**']: omitting this key PROTECTS, it never disables. Every protected artifact is written by a devmate hook, and a hook is not a tool call, so the deny costs the workflow nothing."
+    },
+    "sessionArtifactWriters": {
+      "type": "array",
+      "description": "Identity-gated exceptions to sessionArtifactPaths — the agents permitted to write the artifacts a glob matches. Absent = the protective default [{ glob: '.devmate/session/**/spec.md', agents: ['spec-writer'] }]: spec.md is the one protected artifact an agent, not a hook, produces. Fails closed on a malformed entry — a half-read writer roster would widen the boundary it exists to narrow.",
+      "items": {
+        "type": "object",
+        "required": ["glob", "agents"],
+        "additionalProperties": false,
+        "properties": {
+          "glob": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Glob selecting the protected artifacts this exception covers." },
+          "agents": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "pattern": "\\S" },
+            "description": "Agent names allowed to write those artifacts (e.g. 'spec-writer')."
+          }
+        }
+      }
+    },
+    "acCoverageGate": {
+      "enum": ["off", "warn", "block"],
+      "description": "AC-2 (epic #416): gates verification-passed/pr-ready on AC-1's coverage read. 'off' (default) is a no-op; 'warn' records a contract_violation trace event but allows the transition; 'block' refuses it."
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "checks": {
+          "type": "array",
+          "description": "Canonical variable-length verification list, fit to the codebase. Mirrors the consumer's hand validator: each check needs a unique non-empty id, a command, and an OPEN category string (never an enum). The legacy unitTest/typeCheck/e2e keys below are deprecated input the consumer normalizes into checks on load.",
+          "items": {
+            "type": "object",
+            "required": ["id", "command", "category"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "description": "Stable kebab-case identifier, unique within checks." },
+              "command": { "type": "string", "minLength": 1, "description": "Opaque command text — rendered into dispatch payloads, never auto-executed." },
+              "category": { "type": "string", "minLength": 1, "description": "Open label (conventional: unit-test, type-check, e2e, lint, format, build, audit, contract, integration, ...). The category 'unit-test' check drives the TDD gate." },
+              "optional": { "type": "boolean", "description": "True marks the check advisory/non-blocking." },
+              "source": { "type": "string", "description": "Grounding pointer to where the command was found (e.g. package.json#scripts.test); '[UNVERIFIED]' marks an ungrounded proposal." }
+            }
+          }
+        },
+        "unitTest": { "type": "string" },
+        "typeCheck": { "type": "string" },
+        "e2e": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["mode"],
+        "properties": { "mode": { "const": "multi-root" } }
+      },
+      "then": {
+        "required": ["primary", "repos"],
+        "properties": {
+          "personas": {
+            "items": { "required": ["persona", "editableGlobs", "repo"] }
+          }
+        }
+      }
+    }
+  ]
+}

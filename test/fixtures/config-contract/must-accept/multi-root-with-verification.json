@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "contractVersion": 3,
+  "mode": "multi-root",
+  "primary": "api",
+  "repos": ["api", "ui"],
+  "personas": [
+    { "persona": "api-dev", "repo": "api", "editableGlobs": ["src/**"], "source": "repo" },
+    { "persona": "ui-dev", "repo": "ui", "editableGlobs": ["src/**"], "source": "repo" }
+  ],
+  "verification": {
+    "checks": [
+      { "id": "unit-test", "command": "npm test", "category": "unit-test", "source": "package.json#scripts.test" },
+      { "id": "lint", "command": "npm run lint", "category": "lint", "optional": true }
+    ]
+  },
+  "testGlobs": ["test/**/*.test.mjs"],
+  "maxConcurrentAgents": 3
+}

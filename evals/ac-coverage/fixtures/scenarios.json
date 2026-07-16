@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "_comment": "AC-6 (epic #416) fixtures for the deterministic AC-coverage eval. Each scenario is a spec + trace + task + config triple materialized into a temp root by scripts/run-ac-coverage-evals.mjs. `specAcs` renders `- [ ] AC{id}: {text}` lines under `## Acceptance criteria` (empty renders a spec with no AC section). `completedAcIds` seeds `impl-AC{n}` step_complete trace events. `expected` is the correct verdict derived from first principles; the harness runs the REAL AC-1 read + AC-2 pr-ready gate and the scorer asserts observed == expected. `category`: correct (a compliant task), miss (a real gap Phase 1 must catch), known-limitation (a real gap Phase 1 cannot catch — documented, not silently passed).",
+  "scenarios": [
+    {
+      "id": "feature-full-coverage",
+      "lane": "feature",
+      "category": "correct",
+      "note": "Every approved AC has a recorded completion — the gate must not obstruct a compliant task in any mode.",
+      "specAcs": [
+        { "id": 1, "text": "first criterion" },
+        { "id": 2, "text": "second criterion" },
+        { "id": 3, "text": "third criterion" }
+      ],
+      "completedAcIds": [1, 2, 3],
+      "expected": {
+        "total": 3,
+        "completed": 3,
+        "coverageOk": true,
+        "off": "allow",
+        "warn": "allow",
+        "block": "allow",
+        "warnViolations": 0
+      }
+    },
+    {
+      "id": "feature-partial",
+      "lane": "feature",
+      "category": "miss",
+      "note": "AC3 never implemented. block refuses; warn records one violation but allows; off allows (pre-gate behaviour).",
+      "specAcs": [
+        { "id": 1, "text": "first criterion" },
+        { "id": 2, "text": "second criterion" },
+        { "id": 3, "text": "third criterion" }
+      ],
+      "completedAcIds": [1, 2],
+      "expected": {
+        "total": 3,
+        "completed": 2,
+        "coverageOk": false,
+        "off": "allow",
+        "warn": "allow",
+        "block": "refuse",
+        "warnViolations": 1
+      }
+    },
+    {
+      "id": "feature-omitted-ids",
+      "lane": "feature",
+      "category": "miss",
+      "note": "Agent implemented AC1 only and omitted AC2 + AC3 completions entirely — the disk read, not the agent's claim, decides.",
+      "specAcs": [
+        { "id": 1, "text": "first criterion" },
+        { "id": 2, "text": "second criterion" },
+        { "id": 3, "text": "third criterion" }
+      ],
+      "completedAcIds": [1],
+      "expected": {
+        "total": 3,
+        "completed": 1,
+        "coverageOk": false,
+        "off": "allow",
+        "warn": "allow",
+        "block": "refuse",
+        "warnViolations": 1
+      }
+    },
+    {
+      "id": "feature-false-claim",
+      "lane": "feature",
+      "category": "miss",
+      "note": "Agent claimed AC4 (out of range — no such AC) while leaving the real AC3 undone. The bogus id is ignored (cannot inflate coverage) and the real miss is caught.",
+      "specAcs": [
+        { "id": 1, "text": "first criterion" },
+        { "id": 2, "text": "second criterion" },
+        { "id": 3, "text": "third criterion" }
+      ],
+      "completedAcIds": [1, 2, 4],
+      "expected": {
+        "total": 3,
+        "completed": 2,
+        "coverageOk": false,
+        "off": "allow",
+        "warn": "allow",
+        "block": "refuse",
+        "warnViolations": 1
+      }
+    },
+    {
+      "id": "feature-zero-ac",
+      "lane": "feature",
+      "category": "miss",
+      "note": "A feature spec that parses to zero ACs (malformed/absent heading) must fail closed, never pass vacuously — block refuses, warn records the zero-AC violation.",
+      "specAcs": [],
+      "completedAcIds": [],
+      "expected": {
+        "total": 0,
+        "completed": 0,
+        "coverageOk": true,
+        "off": "allow",
+        "warn": "allow",
+        "block": "refuse",
+        "warnViolations": 1
+      }
+    },
+    {
+      "id": "chore-zero-ac",
+      "lane": "chore",
+      "category": "correct",
+      "note": "A chore lane carries no acceptance-coverage expectation — zero ACs pass in every mode with no violation.",
+      "specAcs": [],
+      "completedAcIds": [],
+      "expected": {
+        "total": 0,
+        "completed": 0,
+        "coverageOk": true,
+        "off": "allow",
+        "warn": "allow",
+        "block": "allow",
+        "warnViolations": 0
+      }
+    },
+    {
+      "id": "feature-duplicate-ids",
+      "lane": "feature",
+      "category": "correct",
+      "note": "Spec accidentally repeats AC2. computeAcCoverage de-duplicates by id (first wins), so total is 3 and full coverage passes — a numbering slip is tolerated, not thrown.",
+      "specAcs": [
+        { "id": 1, "text": "first criterion" },
+        { "id": 2, "text": "second criterion" },
+        { "id": 2, "text": "second criterion (accidental duplicate)" },
+        { "id": 3, "text": "third criterion" }
+      ],
+      "completedAcIds": [1, 2, 3],
+      "expected": {
+        "total": 3,
+        "completed": 3,
+        "coverageOk": true,
+        "off": "allow",
+        "warn": "allow",
+        "block": "allow",
+        "warnViolations": 0
+      }
+    },
+    {
+      "id": "feature-task-local-as-global",
+      "lane": "feature",
+      "category": "miss",
+      "note": "Pre-#421 an agent reported task-local AC numbers; task B's local AC1 is really global AC3, so global AC3 has no completion. #421 fixes the root cause at dispatch; this gate is the backstop that still catches the resulting miss.",
+      "specAcs": [
+        { "id": 1, "text": "first criterion" },
+        { "id": 2, "text": "second criterion" },
+        { "id": 3, "text": "third criterion" }
+      ],
+      "completedAcIds": [1, 2],
+      "expected": {
+        "total": 3,
+        "completed": 2,
+        "coverageOk": false,
+        "off": "allow",
+        "warn": "allow",
+        "block": "refuse",
+        "warnViolations": 1
+      }
+    },
+    {
+      "id": "feature-stale-completion",
+      "lane": "feature",
+      "category": "known-limitation",
+      "note": "Spec was revised and ACs renumbered, but impl-AC3 records a completion tied to the PRE-revision content. Phase 1 matches by id only, so this reads as fully covered and block allows. This is a documented limitation Phase 2 (commit + spec-digest binding) closes — surfaced in knownLimitations, never a silent pass.",
+      "specAcs": [
+        { "id": 1, "text": "first criterion (revised)" },
+        { "id": 2, "text": "second criterion (revised)" },
+        { "id": 3, "text": "third criterion (added in revision)" }
+      ],
+      "completedAcIds": [1, 2, 3],
+      "expected": {
+        "total": 3,
+        "completed": 3,
+        "coverageOk": true,
+        "off": "allow",
+        "warn": "allow",
+        "block": "allow",
+        "warnViolations": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "_comment": "Allowlist of model names that may appear in `model:` frontmatter of agents/*.agent.md, plus the per-agent model-selection policy enforced by scripts/validate-agents.mjs. `model:` is read by the VS Code Copilot host, NOT by devmate — so a typo here is invisible at runtime (VS Code silently falls back to the model picker). This catalog is what makes that field checkable. Prices are USD per 1M tokens, from the source URL below, and exist to justify the tier each agent sits in. DO NOT add a model name without confirming it against the source and bumping verifiedAt. See docs/model-policy.md.",
+  "schemaVersion": 1,
+  "verifiedAt": "2026-07-13",
+  "source": "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing",
+
+  "models": {
+    "Claude Haiku 4.5 (copilot)": { "input": 1.0, "output": 5.0, "bestFor": "Fast help with simple or repetitive tasks" },
+    "Claude Sonnet 4.5 (copilot)": { "input": 3.0, "output": 15.0, "bestFor": "General-purpose coding and agent tasks" },
+    "Claude Sonnet 4.6 (copilot)": { "input": 3.0, "output": 15.0, "bestFor": "General-purpose coding and agent tasks" },
+    "Claude Sonnet 5 (copilot)": { "input": 2.0, "output": 10.0, "bestFor": "General-purpose coding and agent tasks" },
+    "Claude Opus 4.7 (copilot)": { "input": 5.0, "output": 25.0, "bestFor": "Deep reasoning and debugging" },
+    "Claude Opus 4.8 (copilot)": { "input": 5.0, "output": 25.0, "bestFor": "Deep reasoning and debugging" },
+    "Claude Fable 5 (copilot)": { "input": 10.0, "output": 50.0, "bestFor": "Long-horizon, autonomous coding; first-attempt correctness" },
+    "GPT-5 mini (copilot)": { "input": 0.25, "output": 2.0, "bestFor": "General-purpose coding and writing" },
+    "GPT-5.3-Codex (copilot)": { "input": 1.75, "output": 14.0, "bestFor": "Agentic software development" },
+    "GPT-5.4 (copilot)": { "input": 2.5, "output": 15.0, "bestFor": "Deep reasoning and debugging" },
+    "GPT-5.4 mini (copilot)": { "input": 0.75, "output": 4.5, "bestFor": "Codebase exploration; grep-style tools" },
+    "GPT-5.5 (copilot)": { "input": 5.0, "output": 30.0, "bestFor": "Deep reasoning and debugging" },
+    "GPT-5.6 Luna (copilot)": { "input": 1.0, "output": 6.0, "bestFor": "Fast help with simple or repetitive tasks" },
+    "GPT-5.6 Terra (copilot)": { "input": 2.5, "output": 15.0, "bestFor": "General-purpose coding and agent tasks" },
+    "GPT-5.6 Sol (copilot)": { "input": 5.0, "output": 30.0, "bestFor": "Deep reasoning and debugging" },
+    "Gemini 3 Flash (copilot)": { "input": 0.5, "output": 3.0, "bestFor": "Fast help with simple or repetitive tasks" },
+    "Gemini 3.1 Pro (copilot)": { "input": 2.0, "output": 12.0, "bestFor": "Deep reasoning and debugging" }
+  },
+
+  "_inheritPickerComment": "Agents deliberately shipped with NO `model:` key. VS Code: 'If not specified, the currently selected model in model picker is used' — so with the picker on Auto these inherit GitHub's auto model selection, which routes on task complexity and carries a 10% discount. This is the ONLY documented way to reach Auto: `model: Auto (copilot)` is NOT a documented frontmatter value (see docs/model-policy.md) and resolves to nothing. Listing an agent here makes an absent `model:` a reviewed decision instead of an oversight — any agent that is neither listed here nor pinned to a catalog model fails CI.",
+  "inheritPicker": [
+    "router",
+    "discovery",
+    "spec-writer",
+    "backend",
+    "frontend",
+    "editor",
+    "frontend-tester"
+  ]
+}

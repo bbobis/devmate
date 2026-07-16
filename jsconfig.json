@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "noEmit": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0,
+    "resolveJsonModule": true
+  },
+  "include": ["lib/**/*.mjs", "scripts/**/*.mjs", "hooks/**/*.mjs", "test/**/*.mjs"],
+  "exclude": ["node_modules", "**/node_modules/**"]
+}

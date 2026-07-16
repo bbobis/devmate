@@ -1,0 +1,1 @@
+{ "schemaVersion": 2, "mode": "multi-root", "primary": "a", "personas": [{ "persona": "p", "repo": "a", "editableGlobs": ["a/**"] }] }

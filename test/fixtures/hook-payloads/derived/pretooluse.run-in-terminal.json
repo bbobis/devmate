@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-07-13T00:40:11.001Z",
+  "hook_event_name": "PreToolUse",
+  "session_id": "90d5b813-679d-42e6-962a-667b7d918dbe",
+  "tool_name": "run_in_terminal",
+  "tool_input": {
+    "command": "npm test",
+    "explanation": "Run the test suite",
+    "isBackground": false
+  },
+  "tool_use_id": "toolu_bdrk_01RunInTerminal__vscode-1783898009200",
+  "cwd": "c:\\Dev\\Projects\\worktrees\\3709\\.devmate"
+}

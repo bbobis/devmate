@@ -1,0 +1,17 @@
+{
+  "_comment": "Skill-matching corpus for tdd-debug. Buckets tag the defect each case probes. 'expect:match' means the skill MUST be surfaced at the operating point; 'no-match' means it must NOT. Numbers this produces are recorded in ../baseline.json.",
+  "schemaVersion": 1,
+  "skillId": "tdd-debug",
+  "cases": [
+    { "phrasing": "the checkout test is failing", "expect": "match", "bucket": "exact" },
+    { "phrasing": "debug this", "expect": "match", "bucket": "exact" },
+    { "phrasing": "why are the tests failing after my change", "expect": "match", "bucket": "morphology" },
+    { "phrasing": "why does this function return undefined", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "step through this stack trace with me", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "write the design doc for the parser", "expect": "no-match", "bucket": "negative" },
+    { "phrasing": "why is this value undefined at runtime", "expect": "match", "bucket": "state-rescue", "context": { "lane": "bug", "gate": "impl-started" } },
+    { "phrasing": "some unrelated planning question", "expect": "no-match", "bucket": "state-rescue", "context": { "lane": null, "gate": "spec-draft" } },
+    { "phrasing": "the checkout unit test is failing again", "expect": "match", "bucket": "domain-prior", "context": { "lane": null, "gate": null, "domains": ["billing"], "domainKeywords": { "billing": ["invoice", "payment", "refund"] } } },
+    { "phrasing": "debug the failing checkout test", "expect": "match", "bucket": "domain-prior", "context": { "lane": null, "gate": null, "domains": ["billing"], "domainKeywords": { "billing": ["invoice", "payment", "refund"] } } }
+  ]
+}

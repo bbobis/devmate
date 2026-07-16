@@ -1,0 +1,32 @@
+{
+  "_comment": "MEASURED baseline for the skill-matching eval (evals/skill-matching/suite.test.mjs). CI gates NON-REGRESSION: recall/precision must not fall below these and suppressRate must not rise above. Layers: phrase-level negatives + trigram morphology + state-conditional re-rank (lane/gate priors, lane-skill force-include, DN-5 domain prior). Stateless paraphrases without workflow context remain RED pending the intent-gated menu (a later phase). Regenerate when a fix raises the numbers.",
+  "operatingPoint": {
+    "topN": 3,
+    "minConfidence": 0.25
+  },
+  "recall": 0.7576,
+  "precision": 1,
+  "suppressRate": 0.1818,
+  "perBucket": {
+    "exact": {
+      "recall": 1
+    },
+    "morphology": {
+      "recall": 1
+    },
+    "negative": {
+      "recall": 0.6667,
+      "precision": 1
+    },
+    "paraphrase": {
+      "recall": 0.25
+    },
+    "domain-prior": {
+      "recall": 1
+    },
+    "state-rescue": {
+      "recall": 1,
+      "precision": 1
+    }
+  }
+}

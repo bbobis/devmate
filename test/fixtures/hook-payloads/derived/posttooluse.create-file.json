@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-07-13T00:33:10.882Z",
+  "hook_event_name": "PostToolUse",
+  "session_id": "90d5b813-679d-42e6-962a-667b7d918dbe",
+  "tool_name": "create_file",
+  "tool_input": {
+    "filePath": "c:\\Dev\\Projects\\worktrees\\3709\\.devmate\\state\\worker-returns\\w1.json",
+    "content": "{}"
+  },
+  "tool_response": "Created c:\\Dev\\Projects\\worktrees\\3709\\.devmate\\state\\worker-returns\\w1.json",
+  "tool_use_id": "toolu_bdrk_01CreateFile__vscode-1783898009202",
+  "cwd": "c:\\Dev\\Projects\\worktrees\\3709\\.devmate"
+}

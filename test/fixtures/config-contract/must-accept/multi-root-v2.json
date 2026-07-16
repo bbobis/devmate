@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "mode": "multi-root",
+  "primary": "api",
+  "repos": ["api", "ui"],
+  "personas": [
+    { "persona": "api-dev", "repo": "api", "editableGlobs": ["src/**"], "offLimitsGlobs": ["src/secret/**"], "source": "repo" },
+    { "persona": "ui-dev", "repo": "ui", "editableGlobs": ["src/**"], "source": "repo" }
+  ]
+}

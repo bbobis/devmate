@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/scripts/gate-guard.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\scripts\\gate-guard.mjs\"",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/post-tool-use.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\post-tool-use.mjs\"",
+        "timeout": 15
+      },
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/gate-advance.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\gate-advance.mjs\"",
+        "timeout": 10
+      },
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/spec-integrity-guard.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\spec-integrity-guard.mjs\"",
+        "timeout": 10
+      },
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/contract-validator.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\contract-validator.mjs\"",
+        "timeout": 10
+      },
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/scripts/check-session-budget.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\scripts\\check-session-budget.mjs\"",
+        "timeout": 10
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/scripts/compact-session.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\scripts\\compact-session.mjs\"",
+        "timeout": 15
+      }
+    ],
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/scripts/session-start.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\scripts\\session-start.mjs\"",
+        "timeout": 10
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/approval-listener.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\approval-listener.mjs\"",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/scripts/session-stop.mjs\"",
+        "windows": "node \"${PLUGIN_ROOT}\\scripts\\session-stop.mjs\"",
+        "timeout": 10
+      }
+    ],
+    "SubagentStart": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/subagent-budget-guard.mjs\" start",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\subagent-budget-guard.mjs\" start",
+        "timeout": 10
+      }
+    ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "command": "node \"${PLUGIN_ROOT}/hooks/subagent-budget-guard.mjs\" stop",
+        "windows": "node \"${PLUGIN_ROOT}\\hooks\\subagent-budget-guard.mjs\" stop",
+        "timeout": 10
+      }
+    ]
+  }
+}

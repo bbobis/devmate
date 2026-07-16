@@ -1,0 +1,14 @@
+{
+  "_comment": "TODO: grow fixtures from real traces once available — provisional synthetic set. Recorded (synthetic) trajectories for the trajectory eval (E9-23): one clean feature-lane run plus one bad trace per invariant, each isolating exactly its targeted failure. thresholdCrossed is per-fixture ground truth the trace cannot carry itself — a missing budget_warning after a real crossing is precisely the failure the eval must catch. The fanout-* fixtures (FO-5, failsInvariant null) pin the two-phase discovery fan-out shape instead: standard/large show >=2 overlapping discovery subagent windows at Step 2 followed by one discovery_merge event; tiny shows exactly one discovery dispatch and no merge event.",
+  "schemaVersion": 1,
+  "fixtures": [
+    { "name": "clean", "file": "clean.jsonl", "thresholdCrossed": true, "failsInvariant": null },
+    { "name": "edit-before-impl", "file": "edit-before-impl.jsonl", "thresholdCrossed": true, "failsInvariant": "noEditBeforeImpl" },
+    { "name": "illegal-transition", "file": "illegal-transition.jsonl", "thresholdCrossed": true, "failsInvariant": "legalTransitionSeq" },
+    { "name": "missing-budget-event", "file": "missing-budget-event.jsonl", "thresholdCrossed": true, "failsInvariant": "budgetEventsPresent" },
+    { "name": "excess-tool-calls", "file": "excess-tool-calls.jsonl", "thresholdCrossed": true, "failsInvariant": "boundedToolCalls" },
+    { "name": "fanout-standard", "file": "fanout-standard.jsonl", "thresholdCrossed": false, "failsInvariant": null },
+    { "name": "fanout-large", "file": "fanout-large.jsonl", "thresholdCrossed": false, "failsInvariant": null },
+    { "name": "fanout-tiny", "file": "fanout-tiny.jsonl", "thresholdCrossed": false, "failsInvariant": null }
+  ]
+}

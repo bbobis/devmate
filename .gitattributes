@@ -1,0 +1,22 @@
+# Enforce LF line endings for all text files on every platform.
+#
+# Without this, each contributor's local `core.autocrlf` decides working-tree
+# line endings: a Windows checkout (autocrlf=true) gets CRLF while Linux gets
+# LF. Line-ending-sensitive tests (e.g. the doc mermaid-fence and build-queue
+# grammar checks) then pass on one OS and fail on the other.
+#
+# `text=auto` lets git detect text vs binary; `eol=lf` forces LF in the working
+# tree regardless of local git config. This repo has no Windows scripts
+# (.bat/.cmd/.ps1) that would need CRLF, so LF-everywhere is safe.
+* text=auto eol=lf
+
+# Common binary types — never apply line-ending normalization to these.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.woff  binary
+*.woff2 binary
+*.zip   binary

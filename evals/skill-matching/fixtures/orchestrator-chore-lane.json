@@ -1,0 +1,12 @@
+{
+  "_comment": "Skill-matching corpus for orchestrator-chore-lane. Its negative 'fix bug' excludes cleanup work phrased with 'fix'.",
+  "schemaVersion": 1,
+  "skillId": "orchestrator-chore-lane",
+  "cases": [
+    { "phrasing": "clean up the dead code in utils", "expect": "match", "bucket": "exact" },
+    { "phrasing": "remove unused imports and fix the bug in the parser", "expect": "match", "bucket": "negative" },
+    { "phrasing": "bump the dependencies to latest", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "add a new feature to the sidebar", "expect": "no-match", "bucket": "negative" },
+    { "phrasing": "give these files a general once-over", "expect": "match", "bucket": "state-rescue", "context": { "lane": "chore", "gate": "impl-started" } }
+  ]
+}

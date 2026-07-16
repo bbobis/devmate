@@ -1,0 +1,14 @@
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:00:00.000Z","schemaVersion":1,"from":"no-lane","to":"lane-set","gate":"lane-set"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:01:00.000Z","schemaVersion":1,"from":"lane-set","to":"discovery-done","gate":"discovery-done"}
+{"type":"action","taskId":"traj-eval-task","stepId":"step-1","ts":"2026-07-01T00:02:00.000Z","schemaVersion":1,"actionType":"read_file","path":"docs/PRD.md","digest":"ea030ed91dbda9eb"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:03:00.000Z","schemaVersion":1,"from":"discovery-done","to":"grill-done","gate":"grill-done"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:04:00.000Z","schemaVersion":1,"from":"grill-done","to":"plan-done","gate":"plan-done"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:05:00.000Z","schemaVersion":1,"from":"plan-done","to":"spec-draft","gate":"spec-draft"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:06:00.000Z","schemaVersion":1,"from":"spec-draft","to":"spec-approved","gate":"spec-approved"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:07:00.000Z","schemaVersion":1,"from":"spec-approved","to":"impl-started","gate":"impl-started"}
+{"type":"action","taskId":"traj-eval-task","stepId":"step-2","ts":"2026-07-01T00:08:00.000Z","schemaVersion":1,"actionType":"write_file","path":"test/checkout/cart.test.mjs","digest":"421feeb3c5ad5762"}
+{"type":"action","taskId":"traj-eval-task","stepId":"step-3","ts":"2026-07-01T00:09:00.000Z","schemaVersion":1,"actionType":"write_file","path":"src/checkout/cart.mjs","digest":"3e40fd4eb9c53955"}
+{"type":"action","taskId":"traj-eval-task","stepId":"step-4","ts":"2026-07-01T00:10:00.000Z","schemaVersion":1,"actionType":"str_replace_editor","path":"src/checkout/cart.mjs","digest":"42e3a900c406aa4a"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:11:00.000Z","schemaVersion":1,"from":"impl-started","to":"verification-passed","gate":"verification-passed"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:12:00.000Z","schemaVersion":1,"from":"verification-passed","to":"pr-ready","gate":"pr-ready"}
+{"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:13:00.000Z","schemaVersion":1,"from":"pr-ready","to":"done","gate":"done"}

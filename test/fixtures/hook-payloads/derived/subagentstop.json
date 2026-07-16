@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-07-12T14:07:44.120Z",
+  "hook_event_name": "SubagentStop",
+  "session_id": "59eb0039-7e2f-48d4-b3d5-0188c9e208e1",
+  "agent_id": "a1b2c3d4",
+  "agent_type": "discovery",
+  "stop_hook_active": false,
+  "cwd": "c:\\Dev\\Projects\\worktrees\\3709\\.devmate"
+}

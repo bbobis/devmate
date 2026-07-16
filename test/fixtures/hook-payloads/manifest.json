@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "capturedWorkspaceRoot": "c:\\Dev\\Projects\\worktrees\\3709",
+  "note": "Paths inside a fixture are the capture's own. The conformance suite never edits a fixture on disk; it rebases the fields named in `rebase` onto a temp workspace (relative paths joined with path.join, so the suite is cross-platform).",
+  "fixtures": [
+    {
+      "file": "captured/pretooluse.read-file.json",
+      "event": "PreToolUse",
+      "provenance": "captured",
+      "source": "VS Code Copilot agent hook log (Output panel), 2026-07-12, multi-root workspace created by monoroot",
+      "proves": "cwd is workspaceFolders[0] = the workspace's own .devmate folder; the target path key is tool_input.filePath, never tool_input.path",
+      "rebase": { "cwd": ".devmate", "toolInputFilePath": ".devmate/state/turn-intent.json" }
+    },
+    {
+      "file": "derived/pretooluse.replace-string-in-file.json",
+      "event": "PreToolUse",
+      "provenance": "derived",
+      "source": "Envelope captured verbatim (same log, session 90d5b813); the agent log elides tool_input to \"...\" for edit tools, so tool_input is reconstructed from the replace_string_in_file input schema",
+      "proves": "a source edit is recognized as one and reaches the gate rules",
+      "rebase": { "cwd": ".devmate", "toolInputFilePath": "lib/example.mjs" }
+    },
+    {
+      "file": "derived/pretooluse.run-in-terminal.json",
+      "event": "PreToolUse",
+      "provenance": "derived",
+      "source": "VS Code hooks reference + the run_in_terminal input schema",
+      "proves": "the shell tool is classified by what its command does, not by its name",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/pretooluse.run-subagent.json",
+      "event": "PreToolUse",
+      "provenance": "derived",
+      "source": "VS Code hooks reference; tool_input.agentName is [UNVERIFIED] — the agent log elides runSubagent tool_input to \"...\", so no capture can confirm it",
+      "proves": "HITL-1's first (best-effort) layer; the structural layer is SubagentStart, which reads the verified agent_type",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "captured/posttooluse.run-subagent.json",
+      "event": "PostToolUse",
+      "provenance": "captured",
+      "source": "VS Code Copilot agent hook log (Output panel), 2026-07-13, session fd634936, model claude-sonnet-4.6, monoroot multi-root workspace",
+      "proves": "a subagent's result arrives as `tool_response`: a plain STRING holding the agent's final text (prose + an embedded JSON object), NOT a structured object and NOT a { content } wrapper. `tool_input` is elided to the literal \"...\" by the log, so tool_input.agentName remains unverifiable — the agent's identity must be read from the `agentName` field inside its own returned JSON (devmate's output contract), never from tool_input.",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "captured/subagentstart.router.json",
+      "event": "SubagentStart",
+      "provenance": "captured",
+      "source": "VS Code Copilot agent hook log (Output panel), 2026-07-13, session fd634936, model claude-sonnet-4.6, monoroot multi-root workspace. Lifted verbatim from the ordered event stream in sessions/feature-lane-router.session.json (same capture) so the single event can be asserted on its own.",
+      "proves": "the ONLY identity a SubagentStart carries is `agent_type` + `agent_id` — and `agent_id` IS the parent link: it is exactly the `tool_use_id` of the `runSubagent` PreToolUse that spawned this subagent (`toolu_bdrk_01UqQ3JGUVF9NsqCmRoSWWkW`), minus the host's `__vscode-<n>` suffix. So a child CAN be tied to the tool call that made it. It cannot be tied to an EDIT: a PreToolUse payload carries no agent_id/agent_type at all (captured/pretooluse.read-file.json), so there is nothing on an edit event to join this link against — which is why gate-guard Rule 5 (per-edit persona attribution) was deleted rather than wired (#99).",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/posttooluse.replace-string-in-file.json",
+      "event": "PostToolUse",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: PostToolUse = PreToolUse fields + tool_response",
+      "proves": "memory collection and the action audit key on the real task, from the resolved root",
+      "rebase": { "cwd": ".devmate", "toolInputFilePath": "lib/example.mjs" }
+    },
+    {
+      "file": "derived/posttooluse.create-file.json",
+      "event": "PostToolUse",
+      "provenance": "derived",
+      "source": "VS Code hooks reference; the write target is devmate's own worker-return artifact path",
+      "proves": "the contract validator can find the artifact at all — it read tool_input.path until #77 and validated nothing",
+      "rebase": { "cwd": ".devmate", "toolInputFilePath": ".devmate/state/worker-returns/w1.json" }
+    },
+    {
+      "file": "derived/sessionstart.json",
+      "event": "SessionStart",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: SessionStart carries `source` (currently always \"new\")",
+      "proves": "the session bootstrap reaches the model through hookSpecificOutput.additionalContext",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/userpromptsubmit.json",
+      "event": "UserPromptSubmit",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: UserPromptSubmit carries `prompt`",
+      "proves": "the state anchor is emitted as one JSON document, not raw text the host drops",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/precompact.json",
+      "event": "PreCompact",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: PreCompact carries `trigger` (\"auto\")",
+      "proves": "compaction writes under the resolved root",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/subagentstart.json",
+      "event": "SubagentStart",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: SubagentStart carries agent_id + agent_type — NOT agentName, taskId, or repoRoot",
+      "proves": "an analysis dispatch is allowed pre-task and writes no sentinel-keyed trace",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/subagentstart.fullstack.json",
+      "event": "SubagentStart",
+      "provenance": "derived",
+      "source": "As above, with agent_type = the implementation agent",
+      "proves": "HITL-1 blocks an implementation dispatch with no approved spec — and blocks it in a shape the host honors",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/subagentstop.json",
+      "event": "SubagentStop",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: SubagentStop carries agent_id, agent_type, stop_hook_active. There is no duration field",
+      "proves": "the concurrency count decrements against the real task",
+      "rebase": { "cwd": ".devmate" }
+    },
+    {
+      "file": "derived/stop.json",
+      "event": "Stop",
+      "provenance": "derived",
+      "source": "VS Code hooks reference: Stop carries stop_hook_active",
+      "proves": "the handoff is written under the resolved root",
+      "rebase": { "cwd": ".devmate" }
+    }
+  ]
+}

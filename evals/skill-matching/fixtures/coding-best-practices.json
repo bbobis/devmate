@@ -1,0 +1,11 @@
+{
+  "_comment": "Skill-matching corpus for coding-best-practices. The flagship self-nuke: its own trigger 'write code' is killed by its own negative 'write docs' (shared token 'write').",
+  "schemaVersion": 1,
+  "skillId": "coding-best-practices",
+  "cases": [
+    { "phrasing": "write code to parse the CSV", "expect": "match", "bucket": "negative" },
+    { "phrasing": "refactor this module for clarity", "expect": "match", "bucket": "exact" },
+    { "phrasing": "how should I name this variable", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "update the readme with install steps", "expect": "no-match", "bucket": "negative" }
+  ]
+}

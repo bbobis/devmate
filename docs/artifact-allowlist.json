@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "path": "hooks/hooks.json",
+      "role": "agent-loadable",
+      "notes": "Canonical Copilot hook manifest (SessionStart, PostToolUse, Stop)."
+    },
+    {
+      "path": "docs/AGENTS.md",
+      "role": "agent-loadable",
+      "notes": "Agent instructions loaded at session start."
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "role": "agent-loadable",
+      "notes": "System architecture reference for agents."
+    },
+    {
+      "path": "docs/PATTERNS.md",
+      "role": "agent-loadable",
+      "notes": "Engineering patterns reference."
+    },
+    {
+      "path": "docs/README.md",
+      "role": "agent-loadable",
+      "notes": "Docs index."
+    },
+    {
+      "path": "docs/hooks.md",
+      "role": "agent-loadable",
+      "notes": "Hook system documentation."
+    },
+    {
+      "path": "docs/IMPLEMENT_ISSUE.prompt.md",
+      "role": "agent-loadable",
+      "notes": "Autonomous issue-implementation prompt template."
+    },
+    {
+      "path": "docs/artifact-allowlist.json",
+      "role": "agent-loadable",
+      "notes": "This file \u2014 machine-readable allowlist of agent-loadable artifacts."
+    },
+    {
+      "path": "docs/cleanup-ledger.md",
+      "role": "human-only",
+      "notes": "Human-readable record of artifact cleanup decisions."
+    },
+    {
+      "path": "docs/archive/**",
+      "role": "archive",
+      "notes": "Archived files moved here to preserve history; not agent-loadable."
+    },
+    {
+      "path": "docs/research/**",
+      "role": "human-only",
+      "notes": "Research reports and design explorations — human reading, not agent-loaded."
+    },
+    {
+      "path": "docs/SYSTEM_OVERVIEW.md",
+      "role": "human-only",
+      "notes": "Canonical integrated system overview (E9-28) — onboarding/human reference, not loaded into agent context."
+    },
+    {
+      "path": "docs/capability-registry.json",
+      "role": "agent-loadable",
+      "notes": "Single source of truth for all capability metadata (E0-3)."
+    },
+    {
+      "path": "docs/plugin-help.md",
+      "role": "agent-loadable",
+      "notes": "Generated capability map for agents (E0-3)."
+    },
+    {
+      "path": "docs/marketplace.md",
+      "role": "agent-loadable",
+      "notes": "Generated marketplace summaries (E0-3)."
+    },
+    {
+      "path": "docs/file-budgets.json",
+      "role": "agent-loadable",
+      "notes": "Per-file line/token budget configuration (E0-4)."
+    },
+    {
+      "path": "docs/protocols/loop-protocol.md",
+      "role": "agent-loadable",
+      "notes": "Shared loop/retry protocol card (E0-4)."
+    },
+    {
+      "path": "docs/protocols/tdd-protocol.md",
+      "role": "agent-loadable",
+      "notes": "Shared TDD protocol card (E0-4)."
+    },
+    {
+      "path": "docs/protocols/debug-protocol.md",
+      "role": "agent-loadable",
+      "notes": "Shared debug protocol card (E0-4)."
+    },
+    {
+      "path": "agents/*.agent.md",
+      "role": "agent-loadable",
+      "notes": "Lean role cards for VS Code custom agents (E0-4)."
+    },
+    {
+      "path": "skills/tdd-debug/SKILL.md",
+      "role": "agent-loadable",
+      "notes": "TDD/debug trigger stub; deep content in skills/tdd-debug/refs/ (E4-4)."
+    },
+    {
+      "path": "skills/devmate-init/SKILL.md",
+      "role": "agent-loadable",
+      "notes": "User-invocable skill exposed as /devmate-init; trigger stub with deep content in skills/devmate-init/refs/; backing logic in scripts/init.mjs. Migrated from .github/prompts/init.prompt.md so it ships in the plugin."
+    },
+    {
+      "path": "skills/devmate-map/SKILL.md",
+      "role": "agent-loadable",
+      "notes": "User-invocable skill exposed as /devmate-map; trigger stub with deep content in skills/devmate-map/refs/; backing logic in scripts/generate-domain-map.mjs + scripts/apply-domain-map.mjs (DN-4)."
+    },
+    {
+      "path": ".devmate/session/domain-map-draft.json",
+      "role": "generated",
+      "notes": "DN-4 DRAFT domain map written by scripts/generate-domain-map.mjs; reviewed by the human, applied by scripts/apply-domain-map.mjs (never auto-applied)."
+    },
+    {
+      "path": ".devmate/session/domain-contexts-draft/*.md",
+      "role": "generated",
+      "notes": "DN-4 DRAFT per-domain context stubs written by scripts/generate-domain-map.mjs; copied to .devmate/contexts/ only on explicit apply."
+    },
+    {
+      "path": "plugin-guide.md",
+      "role": "agent-loadable",
+      "notes": "Lean plugin guide referencing protocol cards (E0-4)."
+    },
+    {
+      "path": "docs/memory.md",
+      "role": "agent-loadable",
+      "notes": "Canonical memory path decision, migration procedure, and scan-exclusion rationale (E0-5)."
+    },
+    {
+      "path": "docs/CURRENT_BEHAVIOR.md",
+      "role": "generated",
+      "notes": "Generated authoritative behavior reference from registry, hooks manifest, and tests (E0-6)."
+    },
+    {
+      "path": "docs/verified-settings.json",
+      "role": "agent-loadable",
+      "notes": "Allowlist of VS Code AI setting keys confirmed against official docs (E0-8)."
+    },
+    {
+      "path": "docs/unverified-settings.md",
+      "role": "agent-loadable",
+      "notes": "Audit log of settings keys not found in official docs; excluded from all scaffolds (E0-8)."
+    },
+    {
+      "path": "docs/USER_GUIDE.md",
+      "role": "agent-loadable",
+      "notes": "Consumer-facing user guide: install, /devmate-init setup, full feature list (commands, agents, hooks). Grounded in capability-registry.json and official VS Code docs."
+    },
+    {
+      "path": "test/tech-design-artifact-write.test.mjs",
+      "role": "human-only",
+      "notes": "Tech-design artifact persistence helper coverage (write/read/persist integration)."
+    },
+    {
+      "path": ".devmate/.gitignore",
+      "role": "human-only",
+      "notes": "Keeps transient .devmate paths out of git; read by humans/git only."
+    },
+    {
+      "path": ".devmate/MEMORY.md",
+      "role": "agent-loadable",
+      "notes": "Canonical per-repo memory file loaded by agents."
+    },
+    {
+      "path": ".devmate/devmate.config.json",
+      "role": "agent-loadable",
+      "notes": "Per-repo devmate configuration (personas, globs, budgets)."
+    },
+    {
+      "path": ".devmate/state/*.json",
+      "role": "generated",
+      "notes": "Typed state/result artifacts written by scripts and hooks."
+    },
+    {
+      "path": ".devmate/state/transitions.jsonl",
+      "role": "generated",
+      "notes": "Append-only gate-transition ledger written by the workflow scripts."
+    },
+    {
+      "path": "docs/CONTEXT.md",
+      "role": "agent-loadable",
+      "notes": "Context-engineering design reference."
+    },
+    {
+      "path": "docs/SCRIPTS.md",
+      "role": "agent-loadable",
+      "notes": "Script catalog documentation."
+    },
+    {
+      "path": "docs/agent-capability-rules.md",
+      "role": "agent-loadable",
+      "notes": "Agent capability consistency rules reference."
+    },
+    {
+      "path": "docs/artifacts.md",
+      "role": "agent-loadable",
+      "notes": "Artifact catalog and allowlist policy reference."
+    },
+    {
+      "path": "docs/backend-ready.md",
+      "role": "agent-loadable",
+      "notes": "Backend readiness check documentation."
+    },
+    {
+      "path": "docs/chore-escalation.md",
+      "role": "agent-loadable",
+      "notes": "Chore-lane escalation protocol reference."
+    },
+    {
+      "path": "docs/config.md",
+      "role": "agent-loadable",
+      "notes": "devmate.config.json reference documentation."
+    },
+    {
+      "path": "docs/context-management.md",
+      "role": "agent-loadable",
+      "notes": "Token/context management (TCM) documentation."
+    },
+    {
+      "path": "docs/conventions/multi-root-setup.md",
+      "role": "agent-loadable",
+      "notes": "Multi-root workspace convention reference."
+    },
+    {
+      "path": "docs/gate-guard.md",
+      "role": "agent-loadable",
+      "notes": "Gate-guard hook documentation."
+    },
+    {
+      "path": "docs/gates.md",
+      "role": "agent-loadable",
+      "notes": "Workflow gate reference documentation."
+    },
+    {
+      "path": "docs/skill-matching.md",
+      "role": "agent-loadable",
+      "notes": "Skill-selection pipeline: dual-root loading, lexical scoring, state re-rank, intent-gated menu, decision ledger, and eval."
+    },
+    {
+      "path": "docs/learn.md",
+      "role": "agent-loadable",
+      "notes": "Learning/memory-write documentation."
+    },
+    {
+      "path": "docs/loop-trace-schema.json",
+      "role": "agent-loadable",
+      "notes": "JSON schema for loop trace events."
+    },
+    {
+      "path": "docs/devmate-config.schema.json",
+      "role": "agent-loadable",
+      "notes": "JSON schema for devmate.config.json — the shared config contract with the monoroot producer; kept byte-identical between the two repos."
+    },
+    {
+      "path": "docs/session-handshake.schema.json",
+      "role": "agent-loadable",
+      "notes": "JSON schema for the .devmate session.json handshake — the shared session contract with the monoroot producer; kept byte-identical between the two repos."
+    },
+    {
+      "path": "docs/model-policy.md",
+      "role": "agent-loadable",
+      "notes": "Model/budget policy routing documentation."
+    },
+    {
+      "path": "docs/parallel-dispatch.md",
+      "role": "agent-loadable",
+      "notes": "Parallel dispatch documentation."
+    },
+    {
+      "path": "docs/pr-review.md",
+      "role": "agent-loadable",
+      "notes": "PR-review skill documentation (context digest + typed verdict; PRR-2)."
+    },
+    {
+      "path": "docs/resume.md",
+      "role": "agent-loadable",
+      "notes": "Session resume documentation."
+    },
+    {
+      "path": "docs/rollback.md",
+      "role": "agent-loadable",
+      "notes": "Rollback protocol documentation."
+    },
+    {
+      "path": "docs/workflow.md",
+      "role": "agent-loadable",
+      "notes": "Stage-gated workflow documentation."
+    },
+    {
+      "path": "docs/orchestrator-conversation.md",
+      "role": "agent-loadable",
+      "notes": "Orchestrator per-turn conversation lifecycle narrative (E10-08)."
+    },
+    {
+      "path": "hooks/*.mjs",
+      "role": "human-only",
+      "notes": "Hook handler scripts \u2014 executed by the hook runtime, not loaded into agent context."
+    },
+    {
+      "path": "docs/IMPLEMENTATION_ORDER.md",
+      "role": "agent-loadable",
+      "notes": "Authoritative build queue walked by automated implement-issue runs."
+    },
+    {
+      "path": "docs/discovery-scan.md",
+      "role": "agent-loadable",
+      "notes": "Deterministic, zero-LLM-cost candidate-file scan documentation (FO-3, fan-out/fan-in Phase 1)."
+    },
+    {
+      "path": "docs/discovery-merge.md",
+      "role": "agent-loadable",
+      "notes": "Discovery-artifact fan-in merge documentation: dedup, corroboration, conflicts, rank-before-cap (FO-4, fan-out/fan-in Phase 2)."
+    }
+  ]
+}

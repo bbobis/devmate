@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-07-12T14:03:57.646Z",
+  "hook_event_name": "PreToolUse",
+  "session_id": "59eb0039-7e2f-48d4-b3d5-0188c9e208e1",
+  "transcript_path": "c:\\Users\\bobisb\\AppData\\Roaming\\Code\\User\\workspaceStorage\\6e037e4a5e034b9032829ddb729a393c\\GitHub.copilot-chat\\transcripts\\59eb0039-7e2f-48d4-b3d5-0188c9e208e1.jsonl",
+  "tool_name": "read_file",
+  "tool_input": {
+    "filePath": "c:\\Dev\\Projects\\worktrees\\3709\\.devmate\\state\\turn-intent.json",
+    "startLine": 1,
+    "endLine": 200
+  },
+  "tool_use_id": "call_yzCjDD7hcPEDVviznsszmCx8__vscode-1783864189216",
+  "cwd": "c:\\Dev\\Projects\\worktrees\\3709\\.devmate"
+}

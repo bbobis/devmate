@@ -1,0 +1,34 @@
+{
+  "name": "devmate",
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -p jsconfig.json",
+    "test": "node --test",
+    "validate-skills": "node scripts/validate-skill-split.mjs",
+    "validate:model-policy": "node scripts/validate-model-policy.mjs",
+    "worker-contract-check": "node scripts/worker-contract-check.mjs",
+    "check-artifact-graph": "node scripts/check-artifact-graph.mjs",
+    "check-contracts": "node scripts/check-contracts.mjs",
+    "check-docs-drift": "node scripts/check-docs-drift.mjs",
+    "check-script-refs": "node scripts/check-script-refs.mjs",
+    "check-entrypoint-guard": "node scripts/check-entrypoint-guard.mjs",
+    "check-contract-drift": "node scripts/check-contract-drift.mjs",
+    "eval:issue-quality": "node scripts/run-issue-quality-evals.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run check-contracts && npm run check-artifact-graph && npm run check-docs-drift && npm run check-script-refs && npm run check-entrypoint-guard && npm run check-contract-drift && npm audit --audit-level=high"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@types/node": "^24",
+    "eslint": "^9",
+    "eslint-plugin-n": "^17",
+    "eslint-plugin-node-security": "^4.3.0",
+    "eslint-plugin-secure-coding": "^3.3.0",
+    "eslint-plugin-security": "^4.0.1",
+    "typescript": "^5"
+  }
+}

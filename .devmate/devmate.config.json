@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "maxConcurrentAgents": 3,
+  "personas": [
+    {
+      "persona": "frontend",
+      "editableGlobs": ["src/**/*.{ts,tsx,css}", "public/**"],
+      "offLimitsGlobs": ["src/main/java/**", "src/test/java/**"],
+      "instructionFile": null
+    },
+    {
+      "persona": "backend",
+      "editableGlobs": ["src/main/**", "src/test/**", "lib/**"],
+      "offLimitsGlobs": ["src/ui/**", "public/**"],
+      "instructionFile": null
+    },
+    {
+      "persona": "editor",
+      "editableGlobs": ["docs/**", "*.md", "*.json", ".github/**", "scripts/**"],
+      "offLimitsGlobs": ["src/main/**", "src/ui/**", "src/**/*.tsx"],
+      "instructionFile": null
+    }
+  ]
+}

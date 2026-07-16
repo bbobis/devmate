@@ -1,0 +1,27 @@
+promptpr/
+evals/ac-coverage/results-latest.json
+evals/issue-quality/results-latest.json
+evals/issue-quality/judge-latest.json
+evals/regression-summary.json
+evals/telemetry/
+evals/worktrees/
+
+# Runtime state seeded under .devmate/state/ is transient and must never be
+# committed. The canonical .devmate/MEMORY.md is intentionally left tracked.
+.devmate/state/
+
+# Per-task fact ledgers are transient staging (promoted into repo.jsonl, then
+# rendered into the tracked MEMORY.md); never commit them.
+.devmate/memory/tasks/
+
+# Session artifacts (e.g. spec.md) are ephemeral and must never be committed.
+.devmate/session/
+
+# Legacy directory name — no longer used; kept here as a safety net in case a
+# consumer has not yet run scripts/migrate-devmate-dir.mjs.
+.devmate/state/
+.devmate/session/
+
+node_modules/
+
+.tmp-test/

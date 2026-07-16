@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "personas": [
+    { "persona": "frontend", "editableGlobs": ["src/ui/**"], "offLimitsGlobs": ["src/api/**"] },
+    { "persona": "backend", "editableGlobs": ["src/api/**", "lib/**"] }
+  ],
+  "verification": { "unitTest": "npm test" }
+}

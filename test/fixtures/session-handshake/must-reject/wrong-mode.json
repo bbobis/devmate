@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "branchName": "feature-x",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "workspaceFile": "feature-x.code-workspace",
+  "devmate": {
+    "mode": "single-root",
+    "primary": "api",
+    "configPath": ".devmate/devmate.config.json"
+  },
+  "worktrees": []
+}

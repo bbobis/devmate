@@ -1,0 +1,12 @@
+{
+  "name": "devmate-marketplace",
+  "owner": { "name": "LP-GTM-Product-Engineering" },
+  "plugins": [
+    {
+      "name": "devmate",
+      "source": "./",
+      "description": "Copilot coding agent.",
+      "version": "0.0.1"
+    }
+  ]
+}

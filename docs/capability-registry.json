@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-25T12:00:00.000Z",
+  "capabilities": [
+    {
+      "id": "session-start-hook",
+      "type": "hook",
+      "name": "Session Start Hook",
+      "description": "Runs on Copilot SessionStart to initialise the session budget and context.",
+      "invocationPath": "scripts/session-start.mjs",
+      "invocation": "auto-registered",
+      "tags": ["hooks", "session"]
+    },
+    {
+      "id": "post-tool-use-hook",
+      "type": "hook",
+      "name": "Post Tool Use Hook",
+      "description": "Runs on Copilot PostToolUse to audit and record tool calls.",
+      "invocationPath": "scripts/post-tool-use.mjs",
+      "invocation": "auto-registered",
+      "tags": ["hooks", "audit"]
+    },
+    {
+      "id": "check-session-budget-hook",
+      "type": "hook",
+      "name": "Session Budget Hook",
+      "description": "Runs on Copilot PostToolUse to measure session context size and warn when the token budget is approached or exceeded.",
+      "invocationPath": "scripts/check-session-budget.mjs",
+      "invocation": "auto-registered",
+      "tags": ["hooks", "budget"]
+    },
+    {
+      "id": "compact-session-hook",
+      "type": "hook",
+      "name": "Compact Session Hook",
+      "description": "Runs on Copilot PreCompact to write a typed, high-recall compaction artifact a fresh session can resume from.",
+      "invocationPath": "scripts/compact-session.mjs",
+      "invocation": "auto-registered",
+      "tags": ["hooks", "compaction"]
+    },
+    {
+      "id": "session-stop-hook",
+      "type": "hook",
+      "name": "Session Stop Hook",
+      "description": "Runs on Copilot Stop to persist session state and emit a digest.",
+      "invocationPath": "scripts/session-stop.mjs",
+      "invocation": "auto-registered",
+      "tags": ["hooks", "session"]
+    },
+    {
+      "id": "validate-hooks",
+      "type": "script",
+      "name": "Validate Hooks",
+      "description": "Validates hooks/hooks.json against official VS Code event names; the live manifest contract is enforced in CI by the hooks-smoke test job.",
+      "invocationPath": "scripts/validate-hooks.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "hooks"]
+    },
+    {
+      "id": "check-artifact-allowlist",
+      "type": "script",
+      "name": "Check Artifact Allowlist",
+      "description": "CI script that verifies every repo file is listed in the artifact allowlist.",
+      "invocationPath": "scripts/check-artifact-allowlist.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "allowlist"]
+    },
+    {
+      "id": "generate-docs",
+      "type": "script",
+      "name": "Generate Docs",
+      "description": "Regenerates all sentinel-delimited capability sections in README and docs from the registry.",
+      "invocationPath": "scripts/generate-docs.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "docs"]
+    },
+    {
+      "id": "check-generated-docs",
+      "type": "script",
+      "name": "Check Generated Docs",
+      "description": "CI lint step that exits 1 when any sentinel-delimited generated block is stale.",
+      "invocationPath": "scripts/check-generated-docs.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "docs"]
+    },
+    {
+      "id": "check-file-budgets",
+      "type": "script",
+      "name": "Check File Budgets",
+      "description": "CI script that enforces per-file line and token budgets for agent and skill files.",
+      "invocationPath": "scripts/check-file-budgets.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "budgets"]
+    },
+    {
+      "id": "generate-current-behavior",
+      "type": "script",
+      "name": "Generate Current Behavior",
+      "description": "CI script that generates docs/CURRENT_BEHAVIOR.md from the registry, hooks manifest, and test summary.",
+      "invocationPath": "scripts/generate-current-behavior.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "docs"]
+    },
+    {
+      "id": "check-docs-drift",
+      "type": "script",
+      "name": "Check Docs Drift",
+      "description": "CI lint step that exits 1 when docs assert hook events, config keys, or state names not in verified ground truth.",
+      "invocationPath": "scripts/check-docs-drift.mjs",
+      "invocation": "agent-invoked",
+      "tags": ["ci", "docs"]
+    },
+    {
+      "id": "orchestrator-agent",
+      "type": "agent",
+      "name": "Orchestrator",
+      "description": "Stage-gated workflow coordinator for feature, bug, and chore lanes.",
+      "invocationPath": "agents/orchestrator.agent.md",
+      "invocation": "user-invoked",
+      "tags": ["agents", "workflow"]
+    },
+    {
+      "id": "fullstack-agent",
+      "type": "agent",
+      "name": "Full-stack",
+      "description": "Generic language/tool-agnostic implementation agent dispatched N times with a persona from devmate.config.json.",
+      "invocationPath": "agents/fullstack.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "fullstack"]
+    },
+    {
+      "id": "diagnose-agent",
+      "type": "agent",
+      "name": "Diagnose",
+      "description": "Bug-lane diagnosis agent that reproduces the bug and hands off to the full-stack fixer with the diagnosed persona.",
+      "invocationPath": "agents/diagnose.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "bug"]
+    },
+    {
+      "id": "rubber-duck-agent",
+      "type": "agent",
+      "name": "Rubber-Duck",
+      "description": "Adversarial reasoning agent dispatched in grill (pre-plan) and critique (post-plan) modes. Read-only.",
+      "invocationPath": "agents/rubber-duck.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "reasoning"]
+    },
+    {
+      "id": "spec-writer-agent",
+      "type": "agent",
+      "name": "Spec-Writer",
+      "description": "Writes deterministic .devmate/session/spec.md output from planner artifacts and records task-state metadata.",
+      "invocationPath": "agents/spec-writer.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "writer", "feature"]
+    },
+    {
+      "id": "backend-agent",
+      "type": "agent",
+      "name": "Backend",
+      "description": "Backend specialist persona wrapper. Dispatches fullstack with persona=backend. Scope: editableGlobs/offLimitsGlobs for backend persona in devmate.config.json.",
+      "invocationPath": "agents/backend.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "persona", "backend"]
+    },
+    {
+      "id": "frontend-agent",
+      "type": "agent",
+      "name": "Frontend",
+      "description": "Frontend specialist persona wrapper. Dispatches fullstack with persona=frontend. Scope: editableGlobs/offLimitsGlobs for frontend persona in devmate.config.json.",
+      "invocationPath": "agents/frontend.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "persona", "frontend"]
+    },
+    {
+      "id": "editor-agent",
+      "type": "agent",
+      "name": "Editor",
+      "description": "Non-source editor persona wrapper. Dispatches fullstack with persona=editor. Scope: docs, configs, CI, migrations, chore files only.",
+      "invocationPath": "agents/editor.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "persona", "editor"]
+    },
+    {
+      "id": "ui-ux-agent",
+      "type": "agent",
+      "name": "UI-UX",
+      "description": "Design-only feature-lane agent that produces a UI brief artifact with screens, interactions, error states, components, and unverified items.",
+      "invocationPath": "agents/ui-ux.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "design", "feature"]
+    },
+    {
+      "id": "security-agent",
+      "type": "agent",
+      "name": "Security",
+      "description": "Pre-PR security review agent that reports typed findings with evidence pointers.",
+      "invocationPath": "agents/security.agent.md",
+      "invocation": "agent-invoked",
+      "tags": ["agents", "security", "review"]
+    },
+    {
+      "id": "tdd-debug-skill",
+      "type": "skill",
+      "name": "TDD & Debug",
+      "description": "Activates the Red-Green-Refactor cycle and debug hypothesis loop for implementation agents.",
+      "invocationPath": "skills/tdd-debug/SKILL.md",
+      "invocation": "agent-invoked",
+      "tags": ["skills", "tdd", "debug"]
+    },
+    {
+      "id": "init-skill",
+      "type": "skill",
+      "name": "Devmate Init",
+      "description": "User-invocable skill exposed as the /devmate:devmate-init slash command. After running the command, reads .devmate/state/init-proposal.json for the proposed devmate.config.json.",
+      "invocationPath": "skills/devmate-init/SKILL.md",
+      "invocation": "user-invoked",
+      "tags": ["skills", "onboarding", "config"]
+    },
+    {
+      "id": "map-skill",
+      "type": "skill",
+      "name": "Devmate Map",
+      "description": "User-invocable skill exposed as the /devmate:devmate-map slash command. Generates a DRAFT business-domain map + context-file stubs under .devmate/session/ from repo structure, then applies to devmate.config.json only after explicit user confirmation (generate, review, apply).",
+      "invocationPath": "skills/devmate-map/SKILL.md",
+      "invocation": "user-invoked",
+      "tags": ["skills", "onboarding", "config", "domains"]
+    },
+    {
+      "id": "pr-review-skill",
+      "type": "skill",
+      "name": "PR Review",
+      "description": "User-invocable skill exposed as the /devmate:devmate-pr-review slash command. Gathers a capped diff-vs-plan review context at .devmate/state/pr-review-context.json (branch diff, planning artifacts as pointers, precomputed alignment signals), then emits a typed PrReviewArtifact verdict to .devmate/state/pr-review-result.json. Defers authoritative security scanning to the security agent.",
+      "invocationPath": "skills/devmate-pr-review/SKILL.md",
+      "invocation": "user-invoked",
+      "tags": ["skills", "workflow", "pr", "review"]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/LP-GTM-Product-Engineering/monoroot/blob/main/schema/session-handshake.schema.json",
+  "title": "devmate session handshake",
+  "$comment": "Shared contract for the `.devmate/session.json` handshake between monoroot (producer — writes the file at session create/re-sync) and devmate (consumer — parseSessionHandshake in lib/init/session-handshake.mjs reads the schemaVersion pin and the devmate block; everything else is producer-owned metadata the consumer ignores). Pinned by handshakeVersion (= schemaVersion = 2) in the fixtures corpus at test/fixtures/session-handshake. Both runtime validators are hand-written; this schema documents their intersection, and the corpus is the executable agreement. Keep this file byte-identical between the two repos when the handshake changes.",
+  "type": "object",
+  "required": ["schemaVersion", "devmate"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "const": 2,
+      "description": "Session schema version. 2 introduced the devmate block and the bare-filename workspaceFile. The consumer rejects any other value (fail-open: it falls back to config-derived resolution)."
+    },
+    "devmate": {
+      "type": "object",
+      "required": ["mode", "primary", "configPath"],
+      "additionalProperties": true,
+      "description": "The handshake block devmate consumes — a direct pointer to the orchestrator entry point and the merged config, so the consumer never re-derives them.",
+      "properties": {
+        "mode": {
+          "const": "multi-root",
+          "description": "Layout mode. Currently only 'multi-root' is emitted; the consumer rejects anything else."
+        },
+        "primary": {
+          "type": "string",
+          "description": "Repo name (matches a worktrees[].name) that acts as the devmate orchestrator entry point."
+        },
+        "configPath": {
+          "type": "string",
+          "description": "Path to the merged devmate config, relative to the worktree branch root. The producer writes '.devmate/devmate.config.json'."
+        }
+      }
+    },
+    "branchName": {
+      "type": "string",
+      "description": "Producer-owned session metadata; the consumer ignores it."
+    },
+    "createdAt": {
+      "type": "string",
+      "description": "Producer-owned ISO timestamp; the consumer ignores it."
+    },
+    "workspaceFile": {
+      "type": "string",
+      "description": "Producer-owned bare filename of the .code-workspace file co-located with the .devmate folder; the consumer ignores it."
+    },
+    "worktrees": {
+      "type": "array",
+      "description": "Producer-owned worktree inventory; the consumer ignores it.",
+      "items": {
+        "type": "object",
+        "required": ["name", "repoPath", "worktreePath"],
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string" },
+          "repoPath": { "type": "string" },
+          "worktreePath": { "type": "string" }
+        }
+      }
+    }
+  }
+}

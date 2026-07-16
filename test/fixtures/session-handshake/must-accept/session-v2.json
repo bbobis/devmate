@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "branchName": "feature-x",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "workspaceFile": "feature-x.code-workspace",
+  "devmate": {
+    "mode": "multi-root",
+    "primary": "api",
+    "configPath": ".devmate/devmate.config.json"
+  },
+  "worktrees": [
+    { "name": "api", "repoPath": "C:/repos/api", "worktreePath": "C:/worktrees/feature-x/api" },
+    { "name": "ui", "repoPath": "C:/repos/ui", "worktreePath": "C:/worktrees/feature-x/ui" }
+  ]
+}

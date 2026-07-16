@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "branchName": "feature-y",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "workspaceFile": "feature-y.code-workspace",
+  "futureTopLevelField": { "additive": true },
+  "devmate": {
+    "mode": "multi-root",
+    "primary": "payments",
+    "configPath": ".devmate/devmate.config.json",
+    "futureHandshakeField": "additive fields never break the parse"
+  },
+  "worktrees": [
+    { "name": "payments", "repoPath": "C:/repos/payments", "worktreePath": "C:/worktrees/feature-y/payments", "head": "abc123" }
+  ]
+}

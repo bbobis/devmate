@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "mode": "multi-root",
+  "primary": "api",
+  "repos": ["api", "payments"],
+  "personas": [
+    { "persona": "api-dev", "repo": "api", "editableGlobs": ["src/**"], "source": "repo" },
+    {
+      "persona": "payments",
+      "repo": "payments",
+      "editableGlobs": ["payments/**"],
+      "offLimitsGlobs": ["payments/**/.env", "payments/**/secrets/**"],
+      "source": "fallback",
+      "synthesized": true
+    }
+  ]
+}

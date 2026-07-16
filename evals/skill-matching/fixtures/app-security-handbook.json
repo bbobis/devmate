@@ -1,0 +1,16 @@
+{
+  "_comment": "Skill-matching corpus for app-security-handbook. Note 'audit our auth config' is excluded by the negative 'init config' (shared token 'config'), and morphology gaps miss 'vulnerabilities'.",
+  "schemaVersion": 1,
+  "skillId": "app-security-handbook",
+  "cases": [
+    { "phrasing": "check for sql injection in the query builder", "expect": "match", "bucket": "exact" },
+    { "phrasing": "scan for vulnerabilities in the upload handler", "expect": "match", "bucket": "morphology" },
+    { "phrasing": "audit our auth config", "expect": "match", "bucket": "negative" },
+    { "phrasing": "are we storing passwords in plaintext", "expect": "match", "bucket": "paraphrase" },
+    { "phrasing": "hydrate the memory ledger", "expect": "no-match", "bucket": "negative" },
+    { "phrasing": "review the invoice endpoint for injection risks", "expect": "match", "bucket": "domain-prior", "context": { "lane": null, "gate": null, "domains": ["payments"], "domainKeywords": { "payments": ["invoice", "payment", "refund", "pci", "security"] } } },
+    { "phrasing": "the refund notes field is not sanitized", "expect": "match", "bucket": "domain-prior", "context": { "lane": null, "gate": null, "domains": ["payments"], "domainKeywords": { "payments": ["invoice", "payment", "refund", "pci", "security"] } } },
+    { "phrasing": "does the checkout form escape user input", "expect": "match", "bucket": "domain-prior", "context": { "lane": null, "gate": null, "domains": ["payments"], "domainKeywords": { "payments": ["invoice", "payment", "refund", "pci", "security"] } } },
+    { "phrasing": "threat model the login flow", "expect": "match", "bucket": "domain-prior", "context": { "lane": null, "gate": null, "domains": ["billing"], "domainKeywords": { "billing": ["invoice", "payment", "refund"] } } }
+  ]
+}

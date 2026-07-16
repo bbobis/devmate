@@ -1,0 +1,36 @@
+{
+  "_comment": "Fixed task set for the model-routing baseline harness (E9-22). Do not edit casually: the taskSetHash committed in each baseline-<class>.json is derived from this file, and validate mode fails on drift until baselines are re-recorded (DEVMATE_EVAL_RECORD=1 node scripts/eval-model-routing.mjs).",
+  "schemaVersion": 1,
+  "tasks": [
+    {
+      "id": "tiny-help-1",
+      "budgetClass": "tiny",
+      "description": "What does the gate guard deny before impl-started?"
+    },
+    {
+      "id": "tiny-help-2",
+      "budgetClass": "tiny",
+      "description": "Where is the session token budget threshold configured?"
+    },
+    {
+      "id": "standard-feature-1",
+      "budgetClass": "standard",
+      "description": "Add a --json flag to the view-trace summary output with tests."
+    },
+    {
+      "id": "standard-bug-1",
+      "budgetClass": "standard",
+      "description": "Fix the off-by-one in trace line numbering and add a regression test."
+    },
+    {
+      "id": "large-fanout-1",
+      "budgetClass": "large",
+      "description": "Migrate every script to the unified token estimator across three personas and update all affected tests."
+    },
+    {
+      "id": "large-fanout-2",
+      "budgetClass": "large",
+      "description": "Split the orchestrator lane docs into per-lane protocol cards and regenerate every generated block."
+    }
+  ]
+}

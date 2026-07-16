@@ -1,0 +1,71 @@
+{
+  "_comment": "TODO: grow fixtures from real traces once available — provisional synthetic set. Deterministic long-trajectory inputs for the token-budget eval (E9-21): timestamps are fixed (no Date.now in the scorer), sessionFillBytes crosses the tiny warn threshold (2000 tokens = 8000 bytes at 4 bytes/token), and classWarnThresholdTokens mirrors lib/context/session-budget.mjs THRESHOLDS.tiny.warn.",
+  "schemaVersion": 1,
+  "taskId": "tb-eval-task",
+  "budgetClass": "tiny",
+  "baseTs": "2026-07-01T00:00:00.000Z",
+  "classWarnThresholdTokens": 2000,
+  "sessionFillBytes": 12000,
+  "goal": "All fixture facts persisted, compaction resumable, context bounded.",
+  "evidenceRequired": ["spec", "affected-files"],
+  "facts": [
+    { "tool_name": "create_file", "path": "src/checkout/cart.mjs" },
+    { "tool_name": "create_file", "path": "src/checkout/totals.mjs" },
+    { "tool_name": "replace_string_in_file", "path": "src/checkout/tax.mjs" },
+    { "tool_name": "create_file", "path": "test/checkout/cart.test.mjs" },
+    { "tool_name": "replace_string_in_file", "path": "src/checkout/discounts.mjs" },
+    { "tool_name": "create_file", "path": "test/checkout/totals.test.mjs" },
+    { "tool_name": "replace_string_in_file", "path": "src/checkout/cart.mjs" },
+    { "tool_name": "create_file", "path": "src/checkout/receipts.mjs" },
+    { "tool_name": "replace_string_in_file", "path": "src/checkout/receipts.mjs" },
+    { "tool_name": "create_file", "path": "test/checkout/receipts.test.mjs" },
+    { "tool_name": "replace_string_in_file", "path": "src/checkout/totals.mjs" },
+    { "tool_name": "create_file", "path": "docs/checkout.md" }
+  ],
+  "evidencePointers": [
+    {
+      "path": "src/checkout/cart.mjs",
+      "lineRange": null,
+      "reason": "primary implementation file for the trajectory",
+      "confidence": 1,
+      "freshness": "2026-07-01T00:05:00.000Z",
+      "kind": "file"
+    },
+    {
+      "path": "test/checkout/cart.test.mjs",
+      "lineRange": null,
+      "reason": "regression coverage written during the trajectory",
+      "confidence": 0.9,
+      "freshness": "2026-07-01T00:10:00.000Z",
+      "kind": "file"
+    },
+    {
+      "path": "docs/checkout.md",
+      "lineRange": null,
+      "reason": "documentation updated at the end of the trajectory",
+      "confidence": 0.8,
+      "freshness": "2026-07-01T00:15:00.000Z",
+      "kind": "file"
+    }
+  ],
+  "traceEvents": [
+    {
+      "type": "step_complete",
+      "taskId": "tb-eval-task",
+      "stepId": "s1",
+      "ts": "2026-07-01T00:05:00.000Z",
+      "schemaVersion": 1,
+      "label": "implement checkout cart slice",
+      "artifactPaths": []
+    },
+    {
+      "type": "step_complete",
+      "taskId": "tb-eval-task",
+      "stepId": "s2",
+      "ts": "2026-07-01T00:12:00.000Z",
+      "schemaVersion": 1,
+      "label": "write regression tests for totals",
+      "artifactPaths": []
+    }
+  ]
+}
