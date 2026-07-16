@@ -7,8 +7,17 @@
  * directive, so its "no torn writes" oracle is structural-serialization-only:
  * it would pass with the lock modules deleted. These tests close that gap
  * where determinism is cheap: in-process, overlapping async writers, no
- * subprocess scheduling. Every case here FAILS if its lock is replaced with
- * a no-op (verified while authoring by stubbing the lock out).
+ * subprocess scheduling. Every CONTENDED case fails if its lock is replaced
+ * with a no-op (verified while authoring by stubbing the lock out: the
+ * lost-update case lands 1 of 8); the final rejection-isolation case pins a
+ * different real mutant — a serializer that forwards a predecessor's
+ * rejection into its successor.
+ *
+ * Deliberately NOT claimed: a torn-read oracle. In-process, Node's
+ * synchronous whole-file writes cannot interleave with reads, so "a reader
+ * never sees a torn file" is guaranteed by the runtime, not the lock — an
+ * oracle that cannot fail for the reason it names has no place here (the
+ * whole premise of issue #21).
  *
  * Scope matches the modules' own contracts: `withFileLock` is O_EXCL-based
  * mutual exclusion around a critical section; `withAppendLock` is the
@@ -56,34 +65,18 @@ function tick() {
  * every other writer genuinely wait on the lock, not merely run later.
  * @param {string} dataPath
  * @param {string} lockPath
- * @param {string} [pad]  Optional payload to widen the torn-write window.
  * @returns {Promise<import('../../lib/types.mjs').LockResult>}
  */
-function incrementUnderLock(dataPath, lockPath, pad) {
+function incrementUnderLock(dataPath, lockPath) {
   return withFileLock(
     lockPath,
     async () => {
       const current = JSON.parse(readFileSync(dataPath, 'utf8'));
       await tick();
-      writeFileSync(
-        dataPath,
-        JSON.stringify({ counter: current.counter + 1, ...(pad === undefined ? {} : { pad }) }),
-        'utf8',
-      );
+      writeFileSync(dataPath, JSON.stringify({ counter: current.counter + 1 }), 'utf8');
     },
     { retryIntervalMs: 2 },
   );
-}
-
-/**
- * Read the contended file once and assert it parses to a whole state.
- * @param {string} dataPath
- * @returns {Promise<void>}
- */
-async function observeWholeState(dataPath) {
-  const parsed = JSON.parse(readFileSync(dataPath, 'utf8')); // throws on a torn file
-  assert.equal(typeof parsed.counter, 'number', 'observed a half-applied state');
-  await tick();
 }
 
 test('withFileLock › N overlapping read-modify-write writers lose no update', async () => {
@@ -104,36 +97,6 @@ test('withFileLock › N overlapping read-modify-write writers lose no update', 
   }
   const final = JSON.parse(readFileSync(dataPath, 'utf8'));
   assert.equal(final.counter, WRITERS, `lost update: ${WRITERS} writers landed ${final.counter} increments`);
-});
-
-test('withFileLock › a concurrent reader never observes a torn or half-applied file', async () => {
-  const dir = makeTmpDir();
-  const dataPath = join(dir, 'state.json');
-  const lockPath = dataPath + LOCK_SUFFIX;
-  const pad = 'x'.repeat(512);
-  writeFileSync(dataPath, JSON.stringify({ counter: 0, pad }), 'utf8');
-
-  let writersDone = false;
-  const writers = Promise.all(
-    Array.from({ length: WRITERS }, () => incrementUnderLock(dataPath, lockPath, pad)),
-  ).then(() => {
-    writersDone = true;
-  });
-
-  // The reader polls the whole time the writers contend: every observed
-  // state must parse and carry the invariant shape.
-  const reader = (async () => {
-    let observations = 0;
-    while (!writersDone) {
-      await observeWholeState(dataPath);
-      observations += 1;
-    }
-    assert.ok(observations > 0, 'the reader never actually observed anything');
-  })();
-
-  await Promise.all([writers, reader]);
-
-  assert.equal(JSON.parse(readFileSync(dataPath, 'utf8')).counter, WRITERS);
 });
 
 test('withFileLock › a waiter runs strictly after the holder releases, never inside its window', async () => {
@@ -263,6 +226,11 @@ test('appendTraceEvent › N overlapping appends yield exactly N intact, correct
 });
 
 test('withAppendLock › a rejecting appender does not block or reorder the queue behind it', async () => {
+  // Honest scope: this case is NOT lock-vs-no-op load-bearing (a passthrough
+  // serializer also passes it). It pins the serializer's rejection-isolation
+  // contract: a chain that forwarded a predecessor's rejection into its
+  // successor (dropping the rejection handler on the `prev.then(fn, fn)`
+  // link in lib/trace/lock.mjs) would leave `second` un-run and fail here.
   const dir = makeTmpDir();
   const filePath = join(dir, 'trace.jsonl');
   /** @type {string[]} */
