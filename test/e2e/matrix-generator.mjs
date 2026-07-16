@@ -434,13 +434,9 @@ function expectedPhraseOutcome(lane, gate, event, ctx) {
     if (gate === 'impl-started') {
       return { kind: 'no-move', mustMention: 'already approved' };
     }
-    // Everywhere else advanceHumanGate refuses (illegal edge or precondition)
-    // and the hook says so on the model-visible channel — except at `parked`,
-    // where the flattened table's resume fan-out makes parked → spec-approved
-    // a legal edge and the precondition (spec.md exists) decides.
-    if (gate === 'parked' && isLegalTransition(gate, 'spec-approved') && ctx.spec !== 'none') {
-      return { kind: 'advance', to: /** @type {WorkflowGate} */ ('spec-approved') };
-    }
+    // Everywhere else advanceHumanGate refuses (illegal edge, precondition,
+    // or the #20 parked guard — a parked task accepts only resume/abandon)
+    // and the hook says so on the model-visible channel.
     return { kind: 'no-move', mustMention: 'did not advance' };
   }
 
@@ -456,14 +452,13 @@ function expectedPhraseOutcome(lane, gate, event, ctx) {
     return { kind: 'no-move', mustMention: 'did not advance' };
   }
 
-  // approve-pr: advanceHumanGate over the FLATTENED (lane-agnostic) table.
+  // approve-pr: advanceHumanGate over the FLATTENED (lane-agnostic) table —
+  // except at `parked`, which the #20 guard refuses outright (the resume
+  // fan-out is for `resume`'s dynamic target, never an approval edge).
   if (gate === 'pr-ready') {
     return { kind: 'no-move', mustMention: 'already marked ready' };
   }
-  if (isLegalTransition(gate, 'pr-ready')) {
-    // verification-passed → pr-ready on every lane; ALSO parked → pr-ready,
-    // because the resume fan-out makes pr-ready a flattened successor of
-    // parked — a table-backed quirk this matrix documents deliberately.
+  if (gate !== 'parked' && isLegalTransition(gate, 'pr-ready')) {
     return { kind: 'advance', to: /** @type {WorkflowGate} */ ('pr-ready') };
   }
   return { kind: 'no-move', mustMention: 'did not advance' };
@@ -525,6 +520,9 @@ export const GOLDEN_CELLS = Object.freeze([
   { lane: 'chore', gate: 'no-lane', eventId: 'return-router', expect: { kind: 'advance', to: 'impl-started' } },
   { lane: 'feature', gate: 'grill-done', eventId: 'return-critique', expect: { kind: 'advance', to: 'plan-done' } },
   { lane: 'feature', gate: 'verification-passed', eventId: 'approve-pr', expect: { kind: 'advance', to: 'pr-ready' } },
+  // #20: a parked task accepts only resume/abandon — an approval phrase must
+  // never ride the flattened resume fan-out out of parked.
+  { lane: 'feature', gate: 'parked', eventId: 'approve-pr', expect: { kind: 'no-move', mustMention: 'did not advance' } },
   { lane: 'feature', gate: 'spec-draft', eventId: 'status-question', expect: { kind: 'no-move' } },
   { lane: 'bug', gate: 'lane-set', eventId: 'return-grill', expect: { kind: 'advance', to: 'plan-approved' } },
   { lane: 'feature', gate: 'plan-done', eventId: 'return-malformed', expect: { kind: 'no-move' } },
