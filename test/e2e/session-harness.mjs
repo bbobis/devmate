@@ -472,6 +472,24 @@ export function readTraceEvents(filePath) {
 }
 
 /**
+ * Fire the real SessionStart hook over an EXISTING workspace — a "second
+ * session over the same workspace" (issue #7): a chat fork, an overnight
+ * restart, or a post-compaction resume all begin exactly this way. Nothing is
+ * reset by the harness; whatever the hook does to the durable state IS the
+ * behavior under test.
+ * @param {string} hostCwd    The workspace's own `.devmate/` folder.
+ * @param {string} sessionId  Host session id for the new session.
+ * @param {{ source?: string }} [opts]  SessionStart `source` (default 'new').
+ * @returns {{ script: string, status: number, stdout: string, stderr: string }[]}
+ */
+export function startSession(hostCwd, sessionId, opts = {}) {
+  return replaySession(
+    [{ hook_event_name: 'SessionStart', session_id: sessionId, source: opts.source ?? 'new' }],
+    hostCwd,
+  );
+}
+
+/**
  * One turn in a scripted session: a user prompt, followed by zero or more
  * tool-call / subagent-return steps, in order.
  * @typedef {Object} Turn
