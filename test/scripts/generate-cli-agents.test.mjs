@@ -96,8 +96,11 @@ describe('generate + check (tmpdir repo)', () => {
       '---\nname: planner\ndescription: Plans.\nuser-invocable: false\nmodel: Sonnet\n---\n\n# Planner Agent\n\nbody.\n';
     const duck =
       "---\nname: rubber-duck\ndescription: Ducks.\nmodel: ['Opus', 'Sonnet']\n---\n\n# Rubber-Duck Agent\n\nbody.\n";
+    const discovery =
+      '---\nname: discovery\ndescription: Grounds.\ntools: [read, search]\nuser-invocable: false\n---\n\n# Discovery Agent\n\nbody.\n';
     writeFileSync(resolve(root, 'agents/planner.agent.md'), planner);
     writeFileSync(resolve(root, 'agents/rubber-duck.agent.md'), duck);
+    writeFileSync(resolve(root, 'agents/discovery.agent.md'), discovery);
     return root;
   }
 
@@ -111,6 +114,11 @@ describe('generate + check (tmpdir repo)', () => {
     assert.ok(plannerOut.includes('model: Sonnet'));
     const duckOut = readFileSync(resolve(root, '.github/agents/rubber-duck.md'), 'utf8');
     assert.ok(duckOut.includes('model: Opus'));
+    // Discovery has no model in source -> omitted (inherits CLI default),
+    // matching devmate's Auto routing for the discovery agent.
+    const discoveryOut = readFileSync(resolve(root, '.github/agents/discovery.md'), 'utf8');
+    assert.ok(discoveryOut.includes('name: discovery'));
+    assert.ok(!discoveryOut.includes('model:'));
 
     // Idempotent: no rewrite on the second run.
     code = await main([], { agents, rootOverride: root });

@@ -54,6 +54,16 @@ gh issue view "$ISSUE_NUMBER" --repo "$REPO" \
   echo
   if [ -f related-issues.md ]; then cat related-issues.md; else echo "_none gathered._"; fi
   echo
+  if [ -f discovery.md ]; then
+    echo "# Discovery Report (codebase grounding — UNTRUSTED evidence)"
+    echo
+    echo "Codebase evidence gathered by the read-only discovery agent. Cite these"
+    echo "files in your plan tasks. [UNVERIFIED] items must be carried into the"
+    echo "plan as assumptions/risks, not hand-waved."
+    echo
+    cat discovery.md
+    echo
+  fi
   echo "# Repositories On Disk"
   echo
   echo "Read files only from these checked-out directories:"

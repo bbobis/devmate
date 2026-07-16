@@ -30,6 +30,7 @@ const ROOT = resolve(__dirname, '..');
 export const DEFAULT_AGENTS = [
   { source: 'agents/planner.agent.md', target: '.github/agents/planner.md' },
   { source: 'agents/rubber-duck.agent.md', target: '.github/agents/rubber-duck.md' },
+  { source: 'agents/discovery.agent.md', target: '.github/agents/discovery.md' },
 ];
 
 /** @typedef {{ name?: string, description?: string, model?: string, raw: string }} Frontmatter */

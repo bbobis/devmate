@@ -87,6 +87,17 @@ runs:
         chmod +x "${{ github.action_path }}/.github/scripts/story-planner/"*.sh
         bash "${{ github.action_path }}/.github/scripts/story-planner/gather-related-issues.sh"
 
+    - name: Discovery (scan + agent + merge)
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        REPO: ${{ github.repository }}
+        ADD_DIRS: ${{ inputs.add-dirs }} repos
+        ACTION_PATH: ${{ github.action_path }}
+        INVOCATION_MODE: ${{ inputs.invocation-mode }}
+      run: bash "${{ github.action_path }}/.github/scripts/story-planner/run-discovery.sh"
+
     - name: Run planner
       shell: bash
       env:
@@ -135,6 +146,10 @@ runs:
           verdict.txt
           issue.json
           related-issues.md
+          discovery.md
+          .devmate/state/discovery-merged.json
+          .devmate/state/worker-returns/
+          .story-planner-work/discovery/
           comment.md
         if-no-files-found: warn
         retention-days: 14

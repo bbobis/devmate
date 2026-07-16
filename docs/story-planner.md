@@ -19,11 +19,43 @@ GitHub Actions: issues:labeled + label guard
    2. checkout system repos (context)
    3. install bundled CLI agents (.github/agents/*.md)
    4. gather related open + closed issues (dependency context)
-   5. run planner agent  ──► plan.md
-   6. rubber-duck critique loop (2-revision cap) ──► APPROVE_PLAN | REQUEST_REVISION
-   7. post approved plan as issue comment (minimizes prior plan comments)
-   8. upload transcript artifact
+   5. discover codebase grounding (scan + agent + merge)  ──► discovery.md
+   6. run planner agent (reads discovery.md)  ──► plan.md
+   7. rubber-duck critique loop (2-revision cap) ──► APPROVE_PLAN | REQUEST_REVISION
+   8. post approved plan as issue comment (minimizes prior plan comments)
+   9. upload transcript artifact
 ```
+
+## Discovery stage (codebase grounding before the planner)
+
+devmate's own architecture mandates `discovery → grill → planner → rubber-duck`
+([agents/planner.agent.md](../agents/planner.agent.md): the planner reads the
+discovery report and each plan task must cite discovery evidence). The pipeline
+implements devmate's two-phase discovery in the Copilot CLI context:
+
+- **Phase 1 — deterministic scan (0 LLM tokens).**
+  `scripts/discovery-scan.mjs` runs once per checked-out repo with seed terms
+  derived from the issue title + labels. Four parallel strategies (by name,
+  content, import-graph, test-mirror) emit a ranked candidate-file list — see
+  [docs/discovery-scan.md](./discovery-scan.md).
+- **Phase 2 — discovery agent (read-only LLM).** The discovery agent reads the
+  candidates for one repo and emits a typed artifact
+  `{ agentName: "discovery", claims: [{fact, path, confidence}], unverified: [] }`,
+  marking gaps `[UNVERIFIED]`.
+- **Fan-in.** One worker per repo writes to `.devmate/state/worker-returns/`;
+  `scripts/merge-discovery.mjs` dedups, corroborates, and surfaces conflicts into
+  `.devmate/state/discovery-merged.json` — see
+  [docs/discovery-merge.md](./discovery-merge.md). A renderer turns that into
+  `discovery.md`, which the planner prompt includes so every plan task cites
+  real codebase evidence.
+
+- **Graceful degrade.** If a repo yields no valid artifact (scan empty, agent
+  off-contract, JSON unparseable), it is skipped; the merge runs on the rest. If
+  no artifacts survive, a stub `discovery.md` is written and the planner still
+  runs without grounding rather than failing the build.
+- **Cross-repo disambiguation.** Every claim path is workspace-relative and
+  repo-prefixed (e.g. `repos/monoroot/src/foo.ts`) so the merge's path-dedup
+  never collapses claims from different repos.
 
 ## Sharing agent contents (no copy-paste, no symlink)
 
@@ -31,11 +63,13 @@ The Copilot **Chat** agent definitions are the single source of truth:
 
 - `agents/planner.agent.md`
 - `agents/rubber-duck.agent.md`
+- `agents/discovery.agent.md`
 
 The Copilot **CLI** agents are generated from them:
 
 - `.github/agents/planner.md`
 - `.github/agents/rubber-duck.md`
+- `.github/agents/discovery.md`
 
 `scripts/generate-cli-agents.mjs` reads each Chat agent, normalizes the
 frontmatter (keeps `name`, `description`, `model`; drops `tools` and
