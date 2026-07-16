@@ -135,6 +135,14 @@ precondition artifact:
   terminal, issued only after the explicit confirmation required by the gate
   conversation protocol above.
 
+A terminal task never wedges the workspace: once the gate is `done` or
+`abandoned`, nothing can transition out of it, so the next `SessionStart`
+bootstraps a fresh task (at `no-lane`, with a new taskId) over the finished
+`task.json`. The finished task's session artifacts are left in place but
+ignored — they carry the old taskId, so every ownership-checking gate
+precondition refuses them as stale evidence. A `parked` task is a pause, not a
+terminal: a fresh session keeps it intact for a later resume.
+
 When the per-turn router (E10-4) classifies an in-flight message as a
 `steer-scope` intent during implementation, the orchestrator maps it to one of
 these edges instead of restarting the workflow or dead-ending on an

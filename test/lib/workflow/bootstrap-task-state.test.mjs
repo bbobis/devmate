@@ -127,3 +127,96 @@ test("bootstrapTaskState — writes nothing when the host sends no session id", 
     cleanup();
   }
 });
+
+/**
+ * E10-05 lifecycle: a task at a TERMINAL gate (done/abandoned) is finished,
+ * not live — nothing can transition out of it, so leaving it in place would
+ * wedge the workspace forever (no new task could ever start after an
+ * abandon). A fresh session bootstraps a NEW task over it; the old task's
+ * artifacts stay on disk but no longer match the new taskId, so every
+ * ownership-checking precondition refuses them as stale evidence.
+ */
+/**
+ * Shared body for the two terminal-gate cases below.
+ * @param {string} terminalGate
+ */
+async function assertTerminalTaskReplaced(terminalGate) {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        taskId: "t-finished",
+        lane: "feature",
+        workflowGate: terminalGate,
+        currentStep: 0,
+        artifactHashes: {},
+        preImplStash: null,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+    );
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-next" });
+    assert.equal(result.created, true);
+    assert.equal(result.taskId, "s-sess-next");
+
+    const state = readState(statePath);
+    // The new task inherits NOTHING: fresh id, pre-router gate, step 0.
+    assert.equal(state.taskId, "s-sess-next");
+    assert.equal(state.workflowGate, "no-lane");
+    assert.equal(state.currentStep, 0);
+  } finally {
+    cleanup();
+  }
+}
+
+test("bootstrapTaskState — replaces a terminal task (abandoned) with a fresh no-lane task", async () => {
+  await assertTerminalTaskReplaced("abandoned");
+});
+
+test("bootstrapTaskState — replaces a terminal task (done) with a fresh no-lane task", async () => {
+  await assertTerminalTaskReplaced("done");
+});
+
+test("bootstrapTaskState — an in-flight parked task is NOT terminal and survives a fresh session", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    // parked is a steering pause, not an end: the resume pointer will return
+    // it to its recorded gate. Replacing it here would destroy paused work.
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        taskId: "t-parked",
+        lane: "feature",
+        workflowGate: "parked",
+        currentStep: 0,
+        artifactHashes: {},
+        preImplStash: null,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+    );
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-4" });
+    assert.equal(result.created, false);
+    assert.equal(result.reason, "exists");
+    assert.equal(readState(statePath).taskId, "t-parked");
+  } finally {
+    cleanup();
+  }
+});
+
+test("bootstrapTaskState — an unreadable task.json is left untouched (might be live)", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    writeFileSync(statePath, "{ not json");
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-5" });
+    assert.equal(result.created, false);
+    assert.equal(result.reason, "exists");
+    assert.equal(readFileSync(statePath, "utf8"), "{ not json");
+  } finally {
+    cleanup();
+  }
+});
