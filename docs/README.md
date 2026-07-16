@@ -26,6 +26,7 @@ Each of these is authoritative for exactly its own mechanism:
 - [hooks.md](./hooks.md) — hook registrations and payloads
 - [discovery-scan.md](./discovery-scan.md) — deterministic, zero-LLM-cost candidate-file scan (fan-out/fan-in Phase 1)
 - [discovery-merge.md](./discovery-merge.md) — discovery-artifact fan-in merge: dedup, corroboration, conflicts, rank-before-cap (fan-out/fan-in Phase 2)
+- [transition-matrix.md](./transition-matrix.md) — the model-based exhaustive gate × event × lane E2E net: oracle sources, nightly/PR budget split, golden-cell guardrails
 - [SCRIPTS.md](./SCRIPTS.md) — every CLI script, usage and exit codes
 - [model-policy.md](./model-policy.md) — model routing policy (no hardcoded IDs)
 - [agent-capability-rules.md](./agent-capability-rules.md) — claim-to-tool mapping rules

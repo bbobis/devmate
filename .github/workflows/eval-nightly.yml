@@ -13,6 +13,35 @@ permissions:
   contents: read
 
 jobs:
+  # Issue #9: the exhaustive (gate × event × lane) transition matrix. Hundreds
+  # of subprocess-driven cells — minutes, not seconds — so the FULL space runs
+  # here nightly; per-commit CI runs the hand-pinned golden subset plus the
+  # changed-cells heuristic (see test/e2e/transition-matrix.e2e.test.mjs).
+  transition-matrix:
+    name: full transition matrix (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run the full matrix
+        run: node --test test/e2e/transition-matrix.e2e.test.mjs
+        env:
+          DEVMATE_MATRIX: full
+
   judge:
     name: LLM-judge evals (opt-in, non-required)
     runs-on: ubuntu-latest

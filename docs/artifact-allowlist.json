@@ -54,12 +54,12 @@
     {
       "path": "docs/research/**",
       "role": "human-only",
-      "notes": "Research reports and design explorations — human reading, not agent-loaded."
+      "notes": "Research reports and design explorations \u2014 human reading, not agent-loaded."
     },
     {
       "path": "docs/SYSTEM_OVERVIEW.md",
       "role": "human-only",
-      "notes": "Canonical integrated system overview (E9-28) — onboarding/human reference, not loaded into agent context."
+      "notes": "Canonical integrated system overview (E9-28) \u2014 onboarding/human reference, not loaded into agent context."
     },
     {
       "path": "docs/capability-registry.json",
@@ -259,12 +259,12 @@
     {
       "path": "docs/devmate-config.schema.json",
       "role": "agent-loadable",
-      "notes": "JSON schema for devmate.config.json — the shared config contract with the monoroot producer; kept byte-identical between the two repos."
+      "notes": "JSON schema for devmate.config.json \u2014 the shared config contract with the monoroot producer; kept byte-identical between the two repos."
     },
     {
       "path": "docs/session-handshake.schema.json",
       "role": "agent-loadable",
-      "notes": "JSON schema for the .devmate session.json handshake — the shared session contract with the monoroot producer; kept byte-identical between the two repos."
+      "notes": "JSON schema for the .devmate session.json handshake \u2014 the shared session contract with the monoroot producer; kept byte-identical between the two repos."
     },
     {
       "path": "docs/model-policy.md",
@@ -285,6 +285,11 @@
       "path": "docs/resume.md",
       "role": "agent-loadable",
       "notes": "Session resume documentation."
+    },
+    {
+      "path": "docs/transition-matrix.md",
+      "role": "agent-loadable",
+      "notes": "Model-based exhaustive transition-matrix E2E documentation."
     },
     {
       "path": "docs/rollback.md",
