@@ -58,6 +58,9 @@ The pipeline pipes a prompt to `copilot -s` (mirrors `enrich-issue.yml`).
   for discovery. Verify the repo-level CLI agent path on your CLI version before
   switching.
 
+- `system-repos` — newline-separated `owner/name` repos the action checks out into `repos/`.
+- `add-dirs` — workspace-relative dirs the caller already checked out (when Repo A owns its own multi-repo checkout). Merged into `ADD_DIRS`.
+
 Set via the action input `invocation-mode`.
 
 ## Two-token auth (no GitHub App — org policy)
@@ -110,3 +113,10 @@ Tag devmate releases (`@v1`) so consumers get stable updates.
 - Confirm `.github/agents/*.md` is the discovery path your Copilot CLI version
   reads for `--agent`. Until confirmed, keep `invocation-mode: prompt`.
 - Dry-run the workflow against a real `ready-for-dev` issue in a test repo.
+
+## MVP scope of related-issues gathering
+
+The gather step collects the most recently updated open + closed issues per repo
+(recency-based), not semantically matched issues. It surfaces a broad dependency
+context for the planner to filter. Upgrading to label/milestone/keyword or
+semantic matching is a follow-up.

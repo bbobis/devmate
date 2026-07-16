@@ -21,6 +21,13 @@ inputs:
       (e.g. "org/repo-b\norg/repo-c"). Leave empty if the caller checks out repos.
     required: false
     default: ''
+  add-dirs:
+    description: >-
+      Space- or newline-separated workspace-relative directories already
+      checked out by the caller (when Repo A owns its own multi-repo checkout).
+      Added to ADD_DIRS alongside the action-checked-out `repos/`.
+    required: false
+    default: ''
   invocation-mode:
     description: prompt (default, proven) | agent (uses --agent; verify on your CLI).
     required: false
@@ -73,7 +80,7 @@ runs:
         GH_TOKEN: ${{ inputs.planner-token }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         REPO: ${{ github.repository }}
-        ADD_DIRS: repos
+        ADD_DIRS: ${{ inputs.add-dirs }} repos
         RELATED_ISSUES_LIMIT: ${{ inputs.related-issues-limit }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
@@ -84,9 +91,10 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.planner-token }}
+        GITHUB_TOKEN: ${{ github.token }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         REPO: ${{ github.repository }}
-        ADD_DIRS: repos
+        ADD_DIRS: ${{ inputs.add-dirs }} repos
         ACTION_PATH: ${{ github.action_path }}
         INVOCATION_MODE: ${{ inputs.invocation-mode }}
       run: bash "${{ github.action_path }}/.github/scripts/story-planner/run-planner.sh"
@@ -95,9 +103,10 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.planner-token }}
+        GITHUB_TOKEN: ${{ github.token }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         REPO: ${{ github.repository }}
-        ADD_DIRS: repos
+        ADD_DIRS: ${{ inputs.add-dirs }} repos
         ACTION_PATH: ${{ github.action_path }}
         INVOCATION_MODE: ${{ inputs.invocation-mode }}
         MAX_REVISIONS: ${{ inputs.max-revisions }}

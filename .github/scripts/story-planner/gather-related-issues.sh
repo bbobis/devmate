@@ -21,16 +21,34 @@ LIMIT="${RELATED_ISSUES_LIMIT:-20}"
 OUT="${OUT:-related-issues.md}"
 
 # Resolve owner/name for each checked-out repo dir by reading its git remote.
-# Falls back to the story repo ($REPO) when no remotes are found.
+# ADD_DIRS entries may be either a git repo itself or a parent directory of git
+# repos (e.g. `repos/` containing `repos/monoroot`); enumerate children either way.
+# The story repo ($REPO) at the workspace root is always included.
+add_repo_from_dir() {
+  local dir="$1"
+  [ -d "$dir/.git" ] || [ -f "$dir/.git" ] || return 0
+  local remote_url slug
+  remote_url="$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)"
+  slug="$(printf '%s' "$remote_url" | sed -E 's#.*github.com[:/]##; s#\.git$##; s#^/*##')"
+  if [ -n "$slug" ] && [[ ! " ${repos[*]} " =~ " ${slug} " ]]; then
+    repos+=("$slug")
+  fi
+}
+
 repos=("$REPO")
+add_repo_from_dir "$PWD"
 if [ -n "${ADD_DIRS:-}" ]; then
   for dir in $ADD_DIRS; do
-    [ -d "$dir/.git" ] || [ -f "$dir/.git" ] || continue
-    remote_url="$(git -C "$PWD/$dir" config --get remote.origin.url 2>/dev/null || true)"
-    # Normalize git@github.com:owner/name.git or https://github.com/owner/name.git
-    slug="$(printf '%s' "$remote_url" | sed -E 's#.*github.com[:/]##; s#\.git$##; s#^/*##')"
-    if [ -n "$slug" ] && [[ ! " ${repos[*]} " =~ " ${slug} " ]]; then
-      repos+=("$slug")
+    abs="$PWD/$dir"
+    [ -d "$abs" ] || continue
+    if [ -d "$abs/.git" ] || [ -f "$abs/.git" ]; then
+      add_repo_from_dir "$abs"
+    else
+      # Parent dir: enumerate immediate children that are git repos.
+      for child in "$abs"/*/; do
+        [ -d "$child" ] || continue
+        add_repo_from_dir "${child%/}"
+      done
     fi
   done
 fi
