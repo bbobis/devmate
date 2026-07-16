@@ -50,14 +50,13 @@ import {
 import { validateDiscoveryArtifact } from '../../lib/workflow/agents/discovery.mjs';
 import { validatePlannerArtifact } from '../../lib/workflow/agents/planner.mjs';
 import {
+  DEFAULT_SESSION_ID as SESSION_ID,
   readState,
   replaySession,
   seedMonorootWorkspace,
   spawnHook,
   walk,
 } from './session-harness.mjs';
-
-const SESSION_ID = 'fd634936-8166-4295-a74f-2a397c9c5226';
 
 /**
  * Read a JSONL trace file into objects, via the canonical reader.
@@ -347,7 +346,9 @@ describe('E2E — feature lane: the full journey from no-lane to done', () => {
 
     // 9. Per-AC completion via the real script (records impl-AC1 in the trace and
     // refreshes artifactHashes.specDigest to match the checkbox-flipped spec).
-    spawnHook('scripts/complete-ac.mjs', ['--ac', '1', '--repo-root', ws.root], {}, ws.root);
+    // Assert it succeeded so a crash points HERE, not at the downstream trace miss.
+    const acRun = spawnHook('scripts/complete-ac.mjs', ['--ac', '1', '--repo-root', ws.root], {}, ws.root);
+    assert.equal(acRun.status, 0, `complete-ac.mjs failed:\n${acRun.stdout}${acRun.stderr}`);
 
     // 10. Fresh, passing, spec-matching verify evidence → pass-verification →
     // verification-passed. This event has no hook-reachable caller (it fires
@@ -487,12 +488,14 @@ describe('E2E — feature lane: the full journey from no-lane to done', () => {
     assert.equal(r.status, 0, `@fullstack dispatch was denied at impl-started:\n${r.stdout}${r.stderr}`);
   });
 
-  it('gate verification-passed — reached on fresh, passing, spec-matching evidence', () => {
+  it('gate verification-passed (executor-driven, not hook-fired) — reached on fresh, passing, spec-matching evidence', () => {
+    // pass-verification has no hook-reachable caller — a lane executor fires it —
+    // so this exercises transitionGate + the test's own persist, NOT a hook
+    // subprocess. The precondition itself (fresh/passing/spec-matching evidence) is
+    // enforced in before() via `assert.ok(toVerified.ok)`.
     assert.equal(turns['verify'].gate, 'verification-passed');
     const verify = JSON.parse(readFileSync(stateArtifact('verify-result.json'), 'utf8'));
     assert.equal(verify.passed, true);
-    const state = readState(ws.root);
-    assert.equal(verify.specDigest, state.artifactHashes.specDigest, 'verify evidence does not match the approved spec digest');
   });
 
   it('records impl-AC1 completion in the trace', () => {
@@ -510,7 +513,9 @@ describe('E2E — feature lane: the full journey from no-lane to done', () => {
     assert.equal(prReady.evidence, 'approve pr');
   });
 
-  it('gate done — the journey terminates at the terminal gate', () => {
+  it('gate done (executor-driven, not hook-fired) — the journey terminates at the terminal gate', () => {
+    // complete, like pass-verification, is fired by a lane executor with no hook
+    // caller; driven + persisted here exactly as the executor would.
     assert.equal(turns['done'].gate, 'done');
   });
 });
@@ -660,5 +665,44 @@ describe('E2E — feature lane: an empty spec does not open the human-review gat
     replaySession([plainToolReturn()], ws.hostCwd);
 
     assert.equal(readState(ws.root).workflowGate, 'plan-done', 'an empty spec.md opened the human-review gate');
+  });
+});
+
+describe('E2E — feature lane: @fullstack is DENIED before impl-started (dispatch gate negative twin)', () => {
+  /** @type {ReturnType<typeof seedMonorootWorkspace>} */
+  let ws;
+
+  after(() => {
+    if (ws?.root) rmSync(ws.root, { recursive: true, force: true });
+  });
+
+  it('denies the implementation dispatch, loudly, when the gate has not reached impl-started', () => {
+    // The ALLOW twin (above) asserts status===0 once spec + scope both exist; on its
+    // own it would still pass if the gate regressed to "always allow". This proves the
+    // enforcement: at a freshly bootstrapped no-lane session — no spec, no scope — the
+    // same guard must refuse @fullstack with a non-zero exit that names the missing
+    // gate, so the model is told why.
+    ws = seedMonorootWorkspace();
+    replaySession([{ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'new' }], ws.hostCwd);
+
+    const r = spawnHook(
+      'hooks/subagent-budget-guard.mjs',
+      ['start'],
+      {
+        hook_event_name: 'SubagentStart',
+        session_id: SESSION_ID,
+        agent_id: 'toolu_impl_1',
+        agent_type: 'fullstack',
+        cwd: ws.hostCwd,
+      },
+      ws.hostCwd,
+    );
+
+    assert.notEqual(r.status, 0, `@fullstack dispatch was allowed at no-lane:\n${r.stdout}${r.stderr}`);
+    const output = (r.stdout + r.stderr).toLowerCase();
+    assert.ok(
+      output.includes('impl-started'),
+      `the deny message does not name the required gate (impl-started):\n${r.stdout}${r.stderr}`,
+    );
   });
 });
