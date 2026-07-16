@@ -38,10 +38,11 @@
 import { skipUnlessNode } from '../../lib/test-utils/node-guard.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { REPO_ROOT, seedMonorootWorkspace, spawnHook } from './session-harness.mjs';
+import { REPO_ROOT, readTraceEvents, seedMonorootWorkspace, spawnHook } from './session-harness.mjs';
 
 /** The one hook the host runs on PreToolUse. */
 const GATE_GUARD = 'scripts/gate-guard.mjs';
@@ -53,6 +54,7 @@ const TASK_ID = 'T1';
  * @property {'feature'|'bug'|'chore'} [lane]
  * @property {string} [gate]
  * @property {boolean} [tdd]           testFileWritten (default true).
+ * @property {boolean} [specMeta]      record artifactHashes.spec + specDigest (default false) — the feature lane's implementation-dispatch precondition.
  * @property {{ agentName: string, agentId: string }[]} [activeAgents]
  */
 
@@ -77,7 +79,7 @@ function makeState(s) {
     lane: s.lane ?? 'feature',
     workflowGate: s.gate ?? 'impl-started',
     currentStep: 0,
-    artifactHashes: {},
+    artifactHashes: s.specMeta ? { spec: 'h-spec', specDigest: 'h-digest' } : {},
     preImplStash: null,
     budget: 10,
     tddGuard: {
@@ -154,10 +156,16 @@ function preToolUse(ws, toolName, toolInput) {
     GATE_GUARD,
     [],
     {
+      // Shaped like the captured PreToolUse payloads
+      // (test/fixtures/hook-payloads/captured/pretooluse.read-file.json): the
+      // host sends hook_event_name/session_id/tool_name/tool_input/cwd plus a
+      // canonical tool_use_id. The guard ignores tool_use_id, but carrying it
+      // keeps the payload faithful to what VS Code actually delivers.
       hook_event_name: 'PreToolUse',
       session_id: 'sess-deny-matrix',
       tool_name: toolName,
       tool_input: toolInput,
+      tool_use_id: 'call_denyMatrix__vscode-1700000000000',
       cwd: ws.hostCwd,
     },
     ws.hostCwd,
@@ -340,6 +348,228 @@ for (const row of DENY_MATRIX) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Implementation-dispatch gate (HITL-1). A `runSubagent` call targeting an
+// implementation agent runs a SEPARATE deny path — `evaluateImplementationDispatch`
+// in scripts/gate-guard.mjs, BEFORE the rule ladder — that the edit-tool rows
+// above never exercise. Its verdict keys on the dispatched agent, which the host
+// names in `tool_input.agentName`.
+//
+// CONTRACT NOTE: `agentName` is a field of the runSubagent TOOL's input schema
+// (test/fixtures/hook-payloads/derived/pretooluse.run-subagent.json), NOT a
+// verified field of the hook payload the host guarantees — the guard flags it
+// [UNVERIFIED] and fails OPEN when it is absent. The structural, host-verified
+// second layer is the SubagentStart budget guard, which reads `agent_type`. These
+// rows therefore assert the repo-owned tool-input behavior, not a host promise.
+// ---------------------------------------------------------------------------
+
+const DISPATCH = 'runSubagent';
+/** A dispatch of the implementation agent, shaped like the derived runSubagent fixture. */
+const IMPL_DISPATCH = { agentName: 'fullstack', prompt: 'Implement step 1 of the plan.' };
+
+/** @type {DenyRow[]} */
+const DISPATCH_MATRIX = [
+  {
+    rule: 'Dispatch — no task.json (implementation cannot start with no lane in flight)',
+    spec: { state: null },
+    call: [DISPATCH, IMPL_DISPATCH],
+    reason: /implementation dispatch blocked: task\.json is missing or unreadable/,
+    // Recovery: a fully-provisioned feature task — gate impl-started, spec
+    // metadata recorded, scope contract on disk.
+    recoverSpec: { state: { lane: 'feature', gate: 'impl-started', specMeta: true }, scope: ['repo-a/lib/**'] },
+    recoverCall: [DISPATCH, IMPL_DISPATCH],
+  },
+  {
+    rule: 'Dispatch — pre-implementation gate (feature at plan-approved)',
+    spec: { state: { lane: 'feature', gate: 'plan-approved', specMeta: true }, scope: ['repo-a/lib/**'] },
+    call: [DISPATCH, IMPL_DISPATCH],
+    reason: /implementation dispatch blocked: workflowGate must be 'impl-started'/,
+    recoverSpec: { state: { lane: 'feature', gate: 'impl-started', specMeta: true }, scope: ['repo-a/lib/**'] },
+    recoverCall: [DISPATCH, IMPL_DISPATCH],
+  },
+  {
+    rule: 'Dispatch — missing evidence (feature at impl-started, no approved spec)',
+    spec: { state: { lane: 'feature', gate: 'impl-started', specMeta: false }, scope: ['repo-a/lib/**'] },
+    call: [DISPATCH, IMPL_DISPATCH],
+    reason: /implementation dispatch blocked: missing spec artifact metadata/,
+    recoverSpec: { state: { lane: 'feature', gate: 'impl-started', specMeta: true }, scope: ['repo-a/lib/**'] },
+    recoverCall: [DISPATCH, IMPL_DISPATCH],
+  },
+  {
+    rule: 'Dispatch — missing scope contract (feature at impl-started, spec approved)',
+    spec: { state: { lane: 'feature', gate: 'impl-started', specMeta: true }, scope: null },
+    call: [DISPATCH, IMPL_DISPATCH],
+    reason: /implementation dispatch blocked: scope\.md is missing or empty/,
+    recoverSpec: { state: { lane: 'feature', gate: 'impl-started', specMeta: true }, scope: ['repo-a/lib/**'] },
+    recoverCall: [DISPATCH, IMPL_DISPATCH],
+  },
+  {
+    rule: 'Dispatch — bug lane with no diagnosis (diagnose-before-fix)',
+    spec: { state: { lane: 'bug', gate: 'impl-started', specMeta: true }, scope: ['repo-a/lib/**'] },
+    call: [DISPATCH, IMPL_DISPATCH],
+    reason: /implementation dispatch blocked: no valid \.devmate\/state\/diagnosis\.json/,
+    // Recovery stays on the feature lane (its precondition — approved spec — is
+    // representable without a diagnosis fixture); the point is that a corrected
+    // dispatch IS admitted, closing the "gate open ≠ dispatch allowed" gap.
+    recoverSpec: { state: { lane: 'feature', gate: 'impl-started', specMeta: true }, scope: ['repo-a/lib/**'] },
+    recoverCall: [DISPATCH, IMPL_DISPATCH],
+  },
+];
+
+for (const row of DISPATCH_MATRIX) {
+  test(`deny: ${row.rule}`, skipUnlessNode(24), () => {
+    const denyWs = makeWorkspace(row.spec);
+    try {
+      const r = preToolUse(denyWs, row.call[0], row.call[1]);
+      assert.equal(r.status, 0, 'the guard always exits 0');
+      assert.equal(r.decision, 'deny', row.rule);
+      assert.match(r.reason, row.reason);
+      assert.doesNotMatch(r.reason, UNACTIONABLE);
+      assert.ok(r.reason.length < 2000, `deny reason must be bounded (was ${r.reason.length})`);
+    } finally {
+      rmSync(denyWs.root, { recursive: true, force: true });
+    }
+
+    const recoverWs = makeWorkspace(row.recoverSpec);
+    try {
+      const r = preToolUse(recoverWs, row.recoverCall[0], row.recoverCall[1]);
+      assert.equal(r.decision, 'allow', `${row.rule}: the corrected dispatch must be allowed`);
+    } finally {
+      rmSync(recoverWs.root, { recursive: true, force: true });
+    }
+  });
+}
+
+// A dispatch the host cannot attribute (no agentName in tool_input) fails OPEN —
+// the class is NOT silently denied, it is deferred to the SubagentStart guard.
+test('allow: an analysis/unattributable dispatch is not gated here (fail-open)', skipUnlessNode(24), () => {
+  const ws = makeWorkspace({ state: { lane: 'feature', gate: 'plan-approved', specMeta: false }, scope: null });
+  try {
+    // No agentName ⇒ isImplementationDispatch is false ⇒ the dispatch check is
+    // skipped. runSubagent names no path, so the rule ladder also lets it pass.
+    const r = preToolUse(ws, DISPATCH, { prompt: 'Analyze the codebase.' });
+    assert.equal(r.decision, 'allow', 'a dispatch with no implementation agent name must not be gated at PreToolUse');
+    // And an explicit analysis agent is likewise not an implementation dispatch.
+    const r2 = preToolUse(ws, DISPATCH, { agentName: 'discovery', prompt: 'Survey the modules.' });
+    assert.equal(r2.decision, 'allow', 'an analysis-agent dispatch is never implementation-gated');
+  } finally {
+    rmSync(ws.root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DISCLOSURE — persona-scope (the former "Rule 5") is NOT an active deny class.
+// It was removed in #99: a PreToolUse payload carries no agent identity, so an
+// edit cannot be attributed to one of several concurrent personas, and the
+// per-persona editable/off-limits boundary is enforced at COMPLETION
+// (hooks/post-tool-use.mjs), not here. The matrix above therefore has no
+// persona-scope row by design. This test pins that current behavior so a future
+// reader does not mistake its absence for an oversight: an edit OUTSIDE the
+// configured persona's editableGlobs but INSIDE scope.md is ALLOWED — scope.md
+// (Rule 6), which needs no identity, is the sole path boundary at PreToolUse.
+// ---------------------------------------------------------------------------
+
+test('disclosure: PreToolUse is not persona-scoped — scope.md alone bounds the path (#99)', skipUnlessNode(24), () => {
+  // The seeded persona (backend) may edit repo-a/lib/** and .devmate/**; it may
+  // NOT edit repo-b/**. scope.md, however, admits repo-b/lib/**. If a persona
+  // rule still fired at PreToolUse this would deny; because none does, only
+  // scope.md governs and the write is allowed.
+  const ws = makeWorkspace({ scope: ['repo-b/lib/**'] });
+  try {
+    const r = preToolUse(ws, CREATE, { filePath: 'repo-b/lib/x.mjs', content: 'x' });
+    assert.equal(
+      r.decision,
+      'allow',
+      'no persona scoping at PreToolUse: an in-scope path outside the persona globs is allowed',
+    );
+  } finally {
+    rmSync(ws.root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Deny telemetry (#6, proposed change #5). Every deny that has a task context
+// appends ONE bounded, content-free audit line to the task trace; a recovery
+// (an allow) adds none; and a taskId-less deny writes nothing while the host
+// deny still stands. The trace is the audit surface; it must never carry the
+// free-text reason or file content.
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the `deny:*` action events the guard appended to this task's trace.
+ * @param {string} root
+ * @returns {Record<string, any>[]}
+ */
+function readDenyEvents(root) {
+  const p = join(root, '.devmate', 'state', 'trace', `${TASK_ID}.jsonl`);
+  if (!existsSync(p)) return [];
+  return readTraceEvents(p).filter(
+    (e) => typeof e.actionType === 'string' && e.actionType.startsWith('deny:'),
+  );
+}
+
+test('telemetry: a rule-ladder deny appends one bounded, content-free audit event', skipUnlessNode(24), () => {
+  const ws = makeWorkspace({ scope: ['repo-a/lib/**'] });
+  try {
+    const r = preToolUse(ws, CREATE, { filePath: 'repo-a/other/x.mjs', content: 'secret content' });
+    assert.equal(r.decision, 'deny');
+
+    const events = readDenyEvents(ws.root);
+    assert.equal(events.length, 1, 'exactly one deny audit line');
+    const ev = events[0];
+    assert.equal(ev.type, 'action');
+    assert.equal(ev.taskId, TASK_ID);
+    assert.equal(ev.actionType, 'deny:guard:create_file', 'names the deny source layer and the tool');
+    assert.equal(ev.path, 'repo-a/other/x.mjs', 'names the offending path');
+    assert.equal(typeof ev.digest, 'string');
+    assert.equal(ev.digest.length, 16, 'the action digest is bounded');
+    // Content-free: neither the file content nor the free-text reason is persisted.
+    assert.equal(JSON.stringify(ev).includes('secret content'), false, 'no file content in the trace');
+    assert.equal('reason' in ev, false, 'the unbounded reason is not persisted to the trace');
+  } finally {
+    rmSync(ws.root, { recursive: true, force: true });
+  }
+});
+
+test('telemetry: a dispatch deny is audited under its own source layer', skipUnlessNode(24), () => {
+  const ws = makeWorkspace({ state: { lane: 'feature', gate: 'impl-started', specMeta: false }, scope: ['repo-a/lib/**'] });
+  try {
+    const r = preToolUse(ws, DISPATCH, IMPL_DISPATCH);
+    assert.equal(r.decision, 'deny');
+    const events = readDenyEvents(ws.root);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].actionType, 'deny:dispatch:runSubagent');
+  } finally {
+    rmSync(ws.root, { recursive: true, force: true });
+  }
+});
+
+test('telemetry: a recovery (allow) adds no deny event', skipUnlessNode(24), () => {
+  const ws = makeWorkspace({ scope: ['repo-a/lib/**'] });
+  try {
+    const r = preToolUse(ws, CREATE, { filePath: SOURCE_FILE, content: 'export const a = 1;\n' });
+    assert.equal(r.decision, 'allow');
+    assert.equal(readDenyEvents(ws.root).length, 0, 'an allow must not append a deny audit line');
+  } finally {
+    rmSync(ws.root, { recursive: true, force: true });
+  }
+});
+
+test('telemetry: a taskId-less deny writes no trace, yet the host deny still stands', skipUnlessNode(24), () => {
+  // No task.json ⇒ no task id to key a trace file on. The honest behavior is to
+  // skip the append (never fabricate an identity) while the deny itself is
+  // unaffected — the host still receives the refusal.
+  const ws = makeWorkspace({ state: null, config: 'missing' });
+  try {
+    const r = preToolUse(ws, CREATE, { filePath: SOURCE_FILE, content: 'x' });
+    assert.equal(r.decision, 'deny', 'the deny still reaches the host');
+    const traceDir = join(ws.root, '.devmate', 'state', 'trace');
+    assert.equal(existsSync(traceDir), false, 'a taskless deny fabricates no trace file');
+  } finally {
+    rmSync(ws.root, { recursive: true, force: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Terminal-as-editor (Rule 3b): every write mechanism denies; every read-only
@@ -532,20 +762,56 @@ test('bounded: an oversized scope list is capped in the deny reason', skipUnless
 });
 
 // ---------------------------------------------------------------------------
-// Latency: the guard is on the hot path of every tool call, so a deny must be
-// fast and must never hang. Pin the subprocess round-trip well under the guard's
-// own 10s ceiling — a regression that made it block would surface here.
+// Timeout contract. Two distinct claims, neither a magic literal:
+//  (a) the budget the guard runs under is OWNED by hooks/hooks.json, and the
+//      guard finishes well inside it — asserted against the value READ FROM that
+//      file, so the bound and its registration cannot silently diverge; and
+//  (b) exceeding that budget is enforced by the HOST (VS Code kills an overrunning
+//      hook), never by the guard sleeping on itself. That kill is not an in-process
+//      VS Code contract we can assert, so we model the mechanism with spawnSync's
+//      own timeout against a test-only inert sleeper — the production guard is
+//      never made to sleep.
 // ---------------------------------------------------------------------------
 
-test('latency: a deny returns promptly, well under the hook timeout', skipUnlessNode(24), () => {
+/** The registered PreToolUse timeout (seconds), read from the shipped manifest. */
+function registeredPreToolUseTimeoutS() {
+  const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'hooks', 'hooks.json'), 'utf8'));
+  const pre = manifest?.hooks?.PreToolUse;
+  assert.ok(Array.isArray(pre) && pre.length >= 1, 'hooks.json must register a PreToolUse hook');
+  return pre[0].timeout;
+}
+
+test('timeout: the guard finishes well inside the budget hooks.json registers', skipUnlessNode(24), () => {
+  const timeoutS = registeredPreToolUseTimeoutS();
+  assert.equal(timeoutS, 10, 'the PreToolUse timeout bound is owned by hooks.json');
   const ws = makeWorkspace({ config: 'missing' });
   try {
     const r = preToolUse(ws, CREATE, { filePath: SOURCE_FILE, content: 'x' });
     assert.equal(r.decision, 'deny');
-    assert.ok(r.elapsedMs < 10000, `guard round-trip must be prompt (was ${Math.round(r.elapsedMs)}ms)`);
+    // Bound tied to config, not a hardcoded 10000: a guard that regressed into
+    // blocking would breach the very budget the host will kill it for.
+    assert.ok(
+      r.elapsedMs < timeoutS * 1000,
+      `guard round-trip (${Math.round(r.elapsedMs)}ms) must stay inside the ${timeoutS}s budget`,
+    );
   } finally {
     rmSync(ws.root, { recursive: true, force: true });
   }
+});
+
+test('timeout: a hook that overruns its budget is killed by the host (harness-emulated)', skipUnlessNode(24), () => {
+  // Test-only inert seam — NOT the production guard. A process that hangs past
+  // the spawn timeout is terminated and reports a null exit status with a kill
+  // signal, exactly as VS Code bounds a hook that exceeds its `timeout`.
+  const r = spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1e9)'], {
+    timeout: 250,
+    encoding: 'utf8',
+  });
+  assert.equal(r.status, null, 'a killed process has no exit status');
+  assert.ok(
+    r.signal !== null || r.error !== undefined,
+    'the host must terminate an overrunning hook (kill signal or ETIMEDOUT)',
+  );
 });
 
 // A defensive guard against the harness silently pointing at the wrong script.
