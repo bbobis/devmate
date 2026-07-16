@@ -178,7 +178,15 @@ export async function main(args) {
       process.stderr.write(`Error reading task state: ${stateResult.errors.join('; ')}\n`);
       return 1;
     }
-    const result = await transitionGate(stateResult.state, /** @type {GateEvent} */ (arg));
+    // Anchor the precondition reads on the resolved workspace root. Without
+    // this, transitionGate's default stateDir ('.devmate/state') resolves
+    // against the integrated terminal's cwd — the workspace's own .devmate/
+    // folder in monoroot — so every artifact-gated transition (all steering
+    // edges included) was refused with "not found" at .devmate/.devmate/state:
+    // the same doubled-path hazard as #76, one call site further down.
+    const result = await transitionGate(stateResult.state, /** @type {GateEvent} */ (arg), {
+      stateDir: joinPath(cliRoot, '.devmate/state'),
+    });
     if (!result.ok) {
       process.stderr.write(`Gate transition failed: ${result.error}\n`);
       return 1;

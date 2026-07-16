@@ -278,9 +278,12 @@ const DEFAULT_CLOCK = '2026-01-01T00:00:00.000Z';
  *       executor functions that no hook calls.
  *   - mark-pr-ready:   "approve pr" advances the verification-passed → pr-ready
  *       GATE edge via advanceHumanGate; nothing fires the `mark-pr-ready` event.
- *   - revise-scope, re-plan: fired only by lib/workflow/lanes/feature.mjs
- *       `steerFeature`, which has NO caller anywhere.
- *   - new-requirements, park, resume, abandon: steering edges with no caller.
+ *   - revise-scope, re-plan, new-requirements, park, resume, abandon: the
+ *       steering edges. Their only runtime caller is the `gatectl workflow
+ *       set` CLI a human runs in the integrated terminal (docs/gates.md) —
+ *       nothing hook-reachable fires them, so they cannot rescue a stuck
+ *       session on their own. (`lib/workflow/lanes/feature.mjs`'s
+ *       `steerFeature` also fires revise-scope/re-plan but has no caller.)
  *   - approve-plan:    in the GateEvent union but in no transition table and
  *                      fired by nothing.
  * @type {ReadonlySet<GateEvent>}
