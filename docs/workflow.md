@@ -136,12 +136,15 @@ precondition artifact:
   conversation protocol above.
 
 A terminal task never wedges the workspace: once the gate is `done` or
-`abandoned`, nothing can transition out of it, so the next `SessionStart`
-bootstraps a fresh task (at `no-lane`, with a new taskId) over the finished
-`task.json`. The finished task's session artifacts are left in place but
-ignored — they carry the old taskId, so every ownership-checking gate
-precondition refuses them as stale evidence. A `parked` task is a pause, not a
-terminal: a fresh session keeps it intact for a later resume.
+`abandoned`, nothing can transition out of it, so a NEW session's
+`SessionStart` bootstraps a fresh task (at `no-lane`, with a new taskId) over
+the finished `task.json`. The finished task's session artifacts are left in
+place but ignored — they carry the old taskId, so every ownership-checking
+gate precondition refuses them as stale evidence. A resumed SAME session keeps
+its finished task (the deterministic task id it would derive is the finished
+task's own, and a reused id would inherit the old evidence instead of refusing
+it). A `parked` task is a pause, not a terminal: a fresh session keeps it
+intact for a later resume.
 
 When the per-turn router (E10-4) classifies an in-flight message as a
 `steer-scope` intent during implementation, the orchestrator maps it to one of

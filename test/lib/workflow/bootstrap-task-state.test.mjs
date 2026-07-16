@@ -220,3 +220,34 @@ test("bootstrapTaskState — an unreadable task.json is left untouched (might be
     cleanup();
   }
 });
+
+test("bootstrapTaskState — a SAME-session resume over a terminal task keeps it (no id reuse)", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    // deriveTaskId is deterministic per session: replacing here would mint the
+    // terminal task's own id, and the "new" task would then own the old trace
+    // and every same-taskId artifact — inheriting, not refusing, the old
+    // evidence. Same session ⇒ the finished task is preserved.
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        taskId: "s-sess-same",
+        lane: "feature",
+        workflowGate: "abandoned",
+        currentStep: 0,
+        artifactHashes: {},
+        preImplStash: null,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+    );
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-same" });
+    assert.equal(result.created, false);
+    assert.equal(result.reason, "exists");
+    assert.equal(readState(statePath).taskId, "s-sess-same");
+    assert.equal(readState(statePath).workflowGate, "abandoned");
+  } finally {
+    cleanup();
+  }
+});

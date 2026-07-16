@@ -306,9 +306,12 @@ describe('E2E steering — revise-scope and re-plan from impl-started', () => {
   it('refuses revise-scope without a captured scope-change note, naming the missing path', () => {
     const r = gatectl(ws, 'revise-scope');
     assert.notEqual(r.status, 0, `revise-scope succeeded with no scope-change note:\n${r.stdout}`);
+    // The full workspace-anchored path, not just the filename: a doubled-path
+    // regression (#76 class) would name the artifact at the WRONG root and
+    // still contain the bare name.
     assert.ok(
-      (r.stdout + r.stderr).includes('scope-change.json'),
-      `the refusal does not name the missing artifact:\n${r.stdout}${r.stderr}`,
+      (r.stdout + r.stderr).includes(stateArtifact(ws, 'scope-change.json')),
+      `the refusal does not name the missing artifact at this workspace's state dir:\n${r.stdout}${r.stderr}`,
     );
     assert.equal(readState(ws.root).workflowGate, 'impl-started', 'the gate moved on a refused transition');
   });
@@ -476,9 +479,10 @@ describe('E2E lifecycle — park at lane-set, reconcile across a session boundar
   it('refuses to park without a persisted resume pointer, naming the missing path', () => {
     const r = gatectl(ws, 'park');
     assert.notEqual(r.status, 0, `park succeeded with no resume pointer:\n${r.stdout}`);
+    // Full workspace-anchored path (see the revise-scope refusal note).
     assert.ok(
-      (r.stdout + r.stderr).includes('resume-pointer.json'),
-      `the refusal does not name the missing artifact:\n${r.stdout}${r.stderr}`,
+      (r.stdout + r.stderr).includes(stateArtifact(ws, 'resume-pointer.json')),
+      `the refusal does not name the missing artifact at this workspace's state dir:\n${r.stdout}${r.stderr}`,
     );
     assert.equal(readState(ws.root).workflowGate, 'lane-set', 'the gate moved on a refused transition');
   });
@@ -692,6 +696,16 @@ describe('E2E lifecycle — abandon mid-implementation, then a new task bootstra
       );
     }
     assert.equal(readState(ws.root).workflowGate, 'abandoned');
+  });
+
+  it('a resumed SAME session keeps the terminal task — the deterministic id must not be reused', () => {
+    // deriveTaskId is deterministic per session: replacing here would mint the
+    // abandoned task's own id, and the "fresh" task would then OWN the old
+    // trace and artifacts instead of refusing them.
+    sessionStart(ws, SESSION_ID);
+    const state = readState(ws.root);
+    assert.equal(state.taskId, taskId, 'a same-session resume replaced the terminal task');
+    assert.equal(state.workflowGate, 'abandoned');
   });
 
   it('a NEW session bootstraps a fresh task over the terminal state, inheriting nothing', () => {
