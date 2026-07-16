@@ -343,9 +343,22 @@ test('runBugHandoff — regression: existing function still works', async () => 
   const diagnosis = makeDiagnosis();
   const state = makeState();
 
-  const result = await runBugHandoff(diagnosis, state);
+  // Isolate all writes to a temp workspace: with no paths the handoff would
+  // default to cwd-relative `.devmate/state/{task.json,transitions.jsonl}` and
+  // leak `bug-42` state into the repo tree (gitignored, so `git status` stays
+  // clean but the artifact-allowlist check flags the stray).
+  const tmp = await fsp.mkdtemp(join(tmpdir(), 'bug-handoff-'));
+  const statePath = join(tmp, 'task.json');
+  const transitionsPath = join(tmp, 'transitions.jsonl');
+
+  const result = await runBugHandoff(diagnosis, state, { statePath, transitionsPath });
 
   assert.equal(result.target, FIXER_TARGET);
   assert.equal(result.persona, 'backend');
   assert.equal(result.stateUpdated, true);
+
+  // Isolation regression: the write landed in temp, not the repo tree.
+  const persisted = JSON.parse(await fsp.readFile(statePath, 'utf8'));
+  assert.equal(persisted.taskId, 'bug-42');
+  assert.equal(persisted.bugScope, 'backend');
 });

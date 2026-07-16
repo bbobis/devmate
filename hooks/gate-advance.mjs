@@ -50,6 +50,16 @@ import { extractAgentResult } from '../lib/hooks/agent-result.mjs';
 import { createTextCapture, EXIT_BLOCK, writeHookOutput } from '../lib/hooks/output-schema.mjs';
 import { resolveAgentName } from '../lib/hooks/subagent-index.mjs';
 import { readTaskState, STATE_PATH, writeTaskState } from '../lib/task-state.mjs';
+// TEST-ONLY seam in the production import graph — justified (#8, review L7):
+// there is no build step to strip a test import, so the seam ships. Its cost when
+// unarmed is a single frozen-Set lookup, it writes nothing and reads only the
+// injected env, and it can throw only its own InjectedFaultError. Two compensating
+// controls make it impossible to trip in production: `armedFaultFor` fails closed
+// unless the env literally names a known site AND mode, and
+// `test/lib/testing/no-production-fault.test.mjs` fails CI if any file under
+// lib/hooks/scripts ever NAMES (let alone sets) the arming variable. This call
+// site passes only the literal site string, never the env var.
+import { injectFaultIfArmed } from '../lib/testing/fault-injection.mjs';
 import { appendTraceEvent } from '../lib/trace/append.mjs';
 import { artifactsFor } from '../lib/workflow/agent-contracts.mjs';
 import { persistWorkerReturn } from '../lib/workflow/persist-worker-return.mjs';
@@ -72,6 +82,23 @@ const STEP_ID = 'gate-advance';
 
 /** Actor recorded on the gate transitions this hook makes. */
 const HOOK_ACTOR = 'hook-evidence';
+
+/**
+ * Model-visible catch-up guidance emitted (as exit-0 `additionalContext`) when
+ * gate advancement throws mid-turn (#8). The raw error — message and stack —
+ * goes to stderr for the human Output panel ONLY; the model gets this generic,
+ * actionable text with no stack, path, or internal detail. Advancement is a pure
+ * function of on-disk artifacts and state is persisted before the gate walk, so
+ * the next PostToolUse re-reads disk and catches the gate up automatically; this
+ * message tells the model that, so a recoverable stall does not read as a clean,
+ * successful, no-op turn (the original silent-stall shape).
+ */
+const GATE_ADVANCE_RECOVERY_TEXT =
+  '[devmate] gate advancement hit a recoverable error this turn and was skipped; ' +
+  'on-disk state is unchanged (no gate half-moved). The next tool call re-reads ' +
+  'the artifacts and catches the gate up automatically — if the gate still looks ' +
+  'stuck after the next step, re-run the last action. Diagnostic detail is in the ' +
+  'devmate Output panel.';
 
 /**
  * The internal event the handler consumes — derived, never the wire payload.
@@ -385,6 +412,13 @@ export async function handlePostToolUse(event, opts = {}) {
     dirty = true;
   }
 
+  // TEST-ONLY seam (#8): fault the hook AFTER step 1 has written the artifact to
+  // disk but BEFORE the gate advances, so the injection suite can prove the gate
+  // never half-moves and the next invocation catches up. Inert unless the seam's
+  // env var is armed for this site — one Set lookup in production. See
+  // lib/testing/fault-injection.mjs.
+  injectFaultIfArmed('gate-advance');
+
   // 3. Walk the lane's chain as far as the evidence on disk allows.
   const advanced = await advanceAlongLane(state, {
     stateDir: path.join(repoRoot, STATE_DIR),
@@ -403,8 +437,24 @@ export async function handlePostToolUse(event, opts = {}) {
 
   await writeTaskState(advanced.state, statePath);
 
+  // The gate is now persisted. Trace recording is a scoped best-effort per move:
+  // a lost audit line must never propagate to main()'s catch and mask a gate that
+  // actually moved as a "recoverable crash". Each failure is loud on stderr with a
+  // trace-specific signal — never silent, never a rollback (L3).
   for (const move of advanced.moves) {
-    await recordGateTransition(advanced.state.taskId, move, repoRoot);
+    try {
+      await recordGateTransition(advanced.state.taskId, move, repoRoot);
+    } catch (/** @type {any} */ err) {
+      stderr.write(
+        `${JSON.stringify({
+          event: 'gate-advance.trace_error',
+          type: 'gate_transition',
+          from: move.from,
+          to: move.to,
+          reason: String(err?.message ?? err),
+        })}\n`,
+      );
+    }
   }
 
   const last = advanced.moves[advanced.moves.length - 1];
@@ -498,11 +548,20 @@ export async function main(_args) {
   const capture = createTextCapture();
   /** @type {string|null} */
   let alert = null;
+  /** @type {boolean} */
+  let advanceCrashed = false;
   try {
     const result = await handlePostToolUse(eventFromPayload(parsed), { stdout: capture.stream });
     alert = result.alert;
   } catch (/** @type {any} */ err) {
+    // The error message is human-only: it goes to stderr, which on this exit-0
+    // path VS Code shows in the Output panel, never to the model. No stack.
     process.stderr.write(`[gate-advance] ${err?.message ?? err}\n`);
+    // But the model must NOT see a clean, successful no-op when the gate silently
+    // failed to advance (#8) — surface host-honored, model-visible catch-up
+    // guidance via the same safe exit-0 additionalContext path a normal advance
+    // uses. Best-effort/non-blocking: exit 0, no stack, no sensitive detail.
+    advanceCrashed = true;
   }
 
   // A dispatch that produced no evidence exits BLOCK, which routes the text to
@@ -512,6 +571,9 @@ export async function main(_args) {
   // party who could fix it, exactly like a working one.
   if (alert !== null) {
     return writeHookOutput('PostToolUse', `${capture.text()}\n${alert}`, EXIT_BLOCK);
+  }
+  if (advanceCrashed) {
+    return writeHookOutput('PostToolUse', GATE_ADVANCE_RECOVERY_TEXT, 0);
   }
   return writeHookOutput('PostToolUse', capture.text(), 0);
 }
