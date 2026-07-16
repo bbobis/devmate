@@ -94,6 +94,13 @@ jobs:
       - name: Check generated docs freshness
         run: node scripts/check-generated-docs.mjs
 
+      # Fail if the committed Copilot CLI agents (.github/agents/*.md) have
+      # drifted from their Chat sources (agents/*.agent.md).
+      - name: Check generated CLI agents freshness
+        run: |
+          node scripts/generate-cli-agents.mjs
+          git diff --exit-code -- .github/agents
+
       # Fail if any watched settings file uses a key not in verified ground truth.
       - name: Check settings keys
         run: node scripts/check-settings-keys.mjs

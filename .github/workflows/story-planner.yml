@@ -1,0 +1,46 @@
+name: 🤖 Story Planner
+
+# Triggers when an issue is labeled "ready-for-dev", then runs the planner +
+# rubber-duck pipeline and posts the approved plan as a comment.
+#
+# This is the devmate-internal sibling of enrich-issue.yml. It exists to
+# demonstrate the pipeline end-to-end; other teams consume the portable
+# composite action via `uses: <org>/devmate@v1` (see docs/story-planner.md).
+#
+# Auth model (no GitHub App — org policy):
+#   Copilot CLI  -> built-in GITHUB_TOKEN (copilot-requests: write)
+#   Cross-repo + comment -> PLANNER_TOKEN (fine-grained PAT)
+#
+# If your org has disabled the GITHUB_TOKEN Copilot policy, grant the PAT the
+# "Copilot Requests" permission and set COPILOT_GITHUB_TOKEN on the run steps.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+  copilot-requests: write
+
+jobs:
+  plan:
+    if: github.event.label.name == 'ready-for-dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout devmate (this repo)
+        uses: actions/checkout@v4
+
+      # Consumer repos call the action directly; here we self-host the demo by
+      # passing devmate's own extra context repos via system-repos.
+      - name: Run story planner
+        uses: ./
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          planner-token: ${{ secrets.PLANNER_TOKEN }}
+          system-repos: |
+            LP-GTM-Product-Engineering/monoroot
+          invocation-mode: prompt
+          max-revisions: '2'
+          related-issues-limit: '20'

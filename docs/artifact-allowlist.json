@@ -320,6 +320,11 @@
       "path": "docs/discovery-merge.md",
       "role": "agent-loadable",
       "notes": "Discovery-artifact fan-in merge documentation: dedup, corroboration, conflicts, rank-before-cap (FO-4, fan-out/fan-in Phase 2)."
+    },
+    {
+      "path": "docs/story-planner.md",
+      "role": "agent-loadable",
+      "notes": "Story planner pipeline documentation: portable composite action, agent-content sharing, invocation modes, auth, consumer setup."
     }
   ]
 }

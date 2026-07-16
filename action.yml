@@ -1,0 +1,130 @@
+name: devmate Story Planner
+description: >-
+  Portable story-planner pipeline: gather related issues, run the planner agent,
+  rubber-duck the plan, and post the approved plan as a comment on the
+  triggering issue. Bundles its own agents, prompts, and scripts — consumer
+  repos stay thin. Mirrors .github/workflows/enrich-issue.yml invocation.
+
+inputs:
+  issue-number:
+    description: The triggering GitHub issue number.
+    required: true
+  planner-token:
+    description: >-
+      Fine-grained PAT with contents:read on all system repos and issues:write on
+      the story repo. Used for cross-repo checkout + posting the plan comment.
+      (GitHub Apps are not used — org policy.)
+    required: true
+  system-repos:
+    description: >-
+      Newline-separated list of extra owner/name repos to check out as context
+      (e.g. "org/repo-b\norg/repo-c"). Leave empty if the caller checks out repos.
+    required: false
+    default: ''
+  invocation-mode:
+    description: prompt (default, proven) | agent (uses --agent; verify on your CLI).
+    required: false
+    default: prompt
+  max-revisions:
+    description: Max rubber-duck critique iterations before folding open items.
+    required: false
+    default: '2'
+  related-issues-limit:
+    description: Max related issues per repo to gather as dependency context.
+    required: false
+    default: '20'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+
+    - name: Install GitHub Copilot CLI
+      shell: bash
+      run: npm install -g @github/copilot
+
+    - name: Checkout system repos (context)
+      if: ${{ inputs.system-repos != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.planner-token }}
+        SYSTEM_REPOS: ${{ inputs.system-repos }}
+      run: |
+        mkdir -p repos
+        while IFS= read -r slug; do
+          [ -z "$slug" ] && continue
+          name="${slug#*/}"
+          echo "Checking out $slug -> repos/$name"
+          gh repo clone "$slug" "repos/$name" -- --depth 1
+        done <<< "$SYSTEM_REPOS"
+
+    - name: Install bundled CLI agents
+      shell: bash
+      run: |
+        mkdir -p .github/agents
+        cp -f "${{ github.action_path }}/.github/agents/"*.md .github/agents/ 2>/dev/null || true
+
+    - name: Gather related issues
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.planner-token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        REPO: ${{ github.repository }}
+        ADD_DIRS: repos
+        RELATED_ISSUES_LIMIT: ${{ inputs.related-issues-limit }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        chmod +x "${{ github.action_path }}/.github/scripts/story-planner/"*.sh
+        bash "${{ github.action_path }}/.github/scripts/story-planner/gather-related-issues.sh"
+
+    - name: Run planner
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.planner-token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        REPO: ${{ github.repository }}
+        ADD_DIRS: repos
+        ACTION_PATH: ${{ github.action_path }}
+        INVOCATION_MODE: ${{ inputs.invocation-mode }}
+      run: bash "${{ github.action_path }}/.github/scripts/story-planner/run-planner.sh"
+
+    - name: Rubber-duck critique loop
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.planner-token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        REPO: ${{ github.repository }}
+        ADD_DIRS: repos
+        ACTION_PATH: ${{ github.action_path }}
+        INVOCATION_MODE: ${{ inputs.invocation-mode }}
+        MAX_REVISIONS: ${{ inputs.max-revisions }}
+      run: bash "${{ github.action_path }}/.github/scripts/story-planner/run-rubber-duck.sh"
+
+    - name: Post approved plan as issue comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.planner-token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        REPO: ${{ github.repository }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "${{ github.action_path }}/.github/scripts/story-planner/post-comment.sh"
+
+    - name: Upload transcript
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: story-planner-${{ inputs.issue-number }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          planner-prompt.md
+          plan.md
+          critique-prompt.md
+          critique.md
+          verdict.txt
+          issue.json
+          related-issues.md
+          comment.md
+        if-no-files-found: warn
+        retention-days: 14
