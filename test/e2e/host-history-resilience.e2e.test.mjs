@@ -213,6 +213,14 @@ function tracePath(ws, taskId) {
 /**
  * Read the raw trace and assert EVERY line is intact JSON — the "no torn
  * writes" oracle for the fork races. Returns the parsed events.
+ *
+ * Honest scope: this oracle is structural-serialization-only. The harness
+ * drives every hook through spawnSync sequentially (issue #7's lock-step
+ * directive, chosen over nondeterministic true parallelism), so no write is ever
+ * contended here and the lock modules are not exercised under contention —
+ * what IS proven is that interleaved SESSIONS' writes land whole and ordered.
+ * A direct two-overlapping-writers test against lib/file-lock.mjs is the
+ * follow-up that would cover real contention without breaking determinism.
  * @param {{ root: string }} ws @param {string} taskId
  * @returns {Record<string, any>[]}
  */
