@@ -43,7 +43,6 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { readJsonlSync } from '../../lib/json-io.mjs';
 import { transitionGate } from '../../lib/gate-transitions.mjs';
 import {
   escalateChoreToFeature,
@@ -53,101 +52,23 @@ import {
 import {
   DEFAULT_SESSION_ID as SESSION_ID,
   readState,
+  readTraceEvents,
   replaySession,
   seedMonorootWorkspace,
   spawnHook,
+  subagentDispatch,
   walk,
 } from './session-harness.mjs';
-
-/**
- * Read a JSONL trace file into objects, via the canonical reader.
- * @param {string} filePath
- * @returns {Record<string, any>[]}
- */
-function readTraceEvents(filePath) {
-  return /** @type {Record<string, any>[]} */ (readJsonlSync(filePath));
-}
-
-/**
- * The SubagentStart that names the agent. This is the ONLY event on the wire
- * that carries the agent's identity; `agent_id` is the parent link the return's
- * `tool_use_id` points back to.
- * @param {string} agentId
- * @param {string} agentType
- * @returns {Record<string, unknown>}
- */
-function subagentStart(agentId, agentType) {
-  return {
-    hook_event_name: 'SubagentStart',
-    session_id: SESSION_ID,
-    agent_id: agentId,
-    agent_type: agentType,
-  };
-}
-
-/**
- * A `runSubagent` completion in the shape the host delivers.
- * @param {string} agentId
- * @param {string} text
- * @returns {Record<string, unknown>}
- */
-function subagentReturn(agentId, text) {
-  return {
-    hook_event_name: 'PostToolUse',
-    session_id: SESSION_ID,
-    tool_name: 'runSubagent',
-    tool_input: '...',
-    tool_response: text,
-    tool_use_id: `${agentId}__vscode-1783942732395`,
-  };
-}
-
-/**
- * The SubagentStop that closes a dispatch, keeping the concurrency counter honest.
- * @param {string} agentId
- * @param {string} agentType
- * @returns {Record<string, unknown>}
- */
-function subagentStop(agentId, agentType) {
-  return {
-    hook_event_name: 'SubagentStop',
-    session_id: SESSION_ID,
-    agent_id: agentId,
-    agent_type: agentType,
-  };
-}
-
-/**
- * The full start → return → stop trio a real dispatch emits.
- * @param {string} agentId
- * @param {string} agentType
- * @param {string} text
- * @returns {Record<string, unknown>[]}
- */
-function dispatch(agentId, agentType, text) {
-  return [subagentStart(agentId, agentType), subagentReturn(agentId, text), subagentStop(agentId, agentType)];
-}
-
-/**
- * Narrate, then embed a JSON contract — the real return shape. The prose carries
- * a brace before the JSON so a brace-span parser cannot cheat.
- * @param {Record<string, unknown>} body
- * @returns {string}
- */
-function narrate(body) {
-  return `Returning the contract. The {} braces in this prose come before the JSON.\n\n${JSON.stringify(body, null, 2)}`;
-}
 
 /** The path the chore scope contract bounds edits to. */
 const EDIT_PATH = 'repo-a/lib/app.mjs';
 
 /** A terse, compliant chore router return (confidence clears the 0.75 floor). */
-const ROUTER_TEXT = narrate({
-  agentName: 'router',
+const ROUTER_BODY = {
   lane: 'chore',
   budgetClass: 'tiny',
   confidence: 0.91,
-});
+};
 
 /** The full gate path the chore lane must traverse, in order, no gaps, no pr-ready. */
 const EXPECTED_PATH = [
@@ -245,7 +166,7 @@ describe('E2E — chore lane: the full journey from no-lane to done (mechanical,
     // 1. @router → the ONLY dispatch before implementation. Its return classifies
     // the chore lane, and the evidence chain then walks all the way to
     // impl-started with NO human turn — set-lane, present-plan, start-impl.
-    replaySession(dispatch('toolu_router_1', 'router', ROUTER_TEXT), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_router_1', 'router', ROUTER_BODY), ws.hostCwd);
     snapshot('router');
 
     // 2. The dispatch gate must DENY @fullstack now: the gate is open but the
@@ -417,7 +338,7 @@ describe('E2E — chore lane negative twin: mechanical does not mean unbounded',
       [{ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'new' }],
       ws.hostCwd,
     );
-    replaySession(dispatch('toolu_router_1', 'router', ROUTER_TEXT), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_router_1', 'router', ROUTER_BODY), ws.hostCwd);
   });
 
   after(() => {
@@ -452,11 +373,13 @@ describe('E2E — chore lane negative twin: mechanical does not mean unbounded',
   });
 });
 
-describe('E2E — chore escalation: current behaviour is pinned (docs/chore-escalation.md)', () => {
+describe('chore escalation (direct-function, not hook-driven): current behaviour is pinned (docs/chore-escalation.md)', () => {
   /** @type {ReturnType<typeof seedMonorootWorkspace>} */
   let ws;
   /** @type {string} */
   let statePath;
+  /** @type {string} */
+  let transitionsPath;
 
   before(() => {
     ws = seedMonorootWorkspace({ persona: 'editor' });
@@ -467,6 +390,7 @@ describe('E2E — chore escalation: current behaviour is pinned (docs/chore-esca
     // Drive a real bootstrapped task onto the chore lane at plan-approved — the
     // gate the escalation + reset-guard behaviour is defined against.
     statePath = join(ws.root, '.devmate', 'state', 'task.json');
+    transitionsPath = join(ws.root, '.devmate', 'state', 'transitions.jsonl');
     const state = readState(ws.root);
     writeFileSync(
       statePath,
@@ -509,7 +433,11 @@ describe('E2E — chore escalation: current behaviour is pinned (docs/chore-esca
     // Escalation re-enters the feature lane at plan-approved (a wider plan must be
     // approved), preserving the taskId — never a restart.
     const before = /** @type {import('../../lib/types.mjs').TaskState} */ (readState(ws.root));
-    const next = await escalateChoreToFeature(before, { reason: 'scope exceeded chore bounds', statePath });
+    const next = await escalateChoreToFeature(before, {
+      reason: 'scope exceeded chore bounds',
+      statePath,
+      transitionsPath,
+    });
 
     assert.equal(next.lane, 'feature');
     assert.equal(next.workflowGate, 'plan-approved');
@@ -518,5 +446,9 @@ describe('E2E — chore escalation: current behaviour is pinned (docs/chore-esca
     const persisted = readState(ws.root);
     assert.equal(persisted.lane, 'feature');
     assert.equal(persisted.taskId, before.taskId);
+
+    // The lane_transition landed in the temp workspace, NOT the repo tree — proof
+    // the DEFAULT_TRANSITIONS_PATH (repo-root) fallback was overridden.
+    assert.ok(existsSync(transitionsPath), 'the escalation transition was not written to the temp transitions path');
   });
 });

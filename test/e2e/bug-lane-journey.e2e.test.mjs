@@ -47,131 +47,45 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { readJsonlSync } from '../../lib/json-io.mjs';
 import { transitionGate } from '../../lib/gate-transitions.mjs';
 import { validateDiagnosisResult, validateGrillResult } from '../../lib/workflow/contracts.mjs';
 import {
   DEFAULT_SESSION_ID as SESSION_ID,
   readState,
+  readTraceEvents,
   replaySession,
   seedMonorootWorkspace,
   spawnHook,
+  subagentDispatch,
   walk,
 } from './session-harness.mjs';
-
-/**
- * Read a JSONL trace file into objects, via the canonical reader.
- * @param {string} filePath
- * @returns {Record<string, any>[]}
- */
-function readTraceEvents(filePath) {
-  return /** @type {Record<string, any>[]} */ (readJsonlSync(filePath));
-}
-
-/**
- * The SubagentStart that names the agent. This is the ONLY event on the wire
- * that carries the agent's identity; `agent_id` is the parent link the return's
- * `tool_use_id` points back to.
- * @param {string} agentId
- * @param {string} agentType
- * @returns {Record<string, unknown>}
- */
-function subagentStart(agentId, agentType) {
-  return {
-    hook_event_name: 'SubagentStart',
-    session_id: SESSION_ID,
-    agent_id: agentId,
-    agent_type: agentType,
-  };
-}
-
-/**
- * A `runSubagent` completion in the shape the host delivers: `tool_input` is the
- * elided literal `"..."`, `tool_response` is the agent's final CHAT TEXT with
- * the contract embedded in prose, and `tool_use_id` is the SubagentStart
- * `agent_id` plus a `__vscode-<n>` suffix.
- * @param {string} agentId
- * @param {string} text
- * @returns {Record<string, unknown>}
- */
-function subagentReturn(agentId, text) {
-  return {
-    hook_event_name: 'PostToolUse',
-    session_id: SESSION_ID,
-    tool_name: 'runSubagent',
-    tool_input: '...',
-    tool_response: text,
-    tool_use_id: `${agentId}__vscode-1783942732395`,
-  };
-}
-
-/**
- * The SubagentStop that closes a dispatch. Firing it keeps the concurrency
- * counter honest — a start with no matching stop leaves the agent "running", and
- * a later @fullstack dispatch is denied for `maxConcurrentAgents`.
- * @param {string} agentId
- * @param {string} agentType
- * @returns {Record<string, unknown>}
- */
-function subagentStop(agentId, agentType) {
-  return {
-    hook_event_name: 'SubagentStop',
-    session_id: SESSION_ID,
-    agent_id: agentId,
-    agent_type: agentType,
-  };
-}
-
-/**
- * The full start → return → stop trio a real dispatch emits.
- * @param {string} agentId
- * @param {string} agentType
- * @param {string} text
- * @returns {Record<string, unknown>[]}
- */
-function dispatch(agentId, agentType, text) {
-  return [subagentStart(agentId, agentType), subagentReturn(agentId, text), subagentStop(agentId, agentType)];
-}
-
-/**
- * Narrate, then embed a JSON contract — the real return shape. The prose carries
- * a brace before the JSON so a brace-span parser cannot cheat.
- * @param {Record<string, unknown>} body
- * @returns {string}
- */
-function narrate(body) {
-  return `Returning the contract. The {} braces in this prose come before the JSON.\n\n${JSON.stringify(body, null, 2)}`;
-}
 
 /** The one path @diagnose bounds the fix to; it becomes the scope contract. */
 const FIX_PATH = 'repo-a/lib/cursor.mjs';
 
 /** A terse, compliant bug router return (confidence clears the 0.75 floor). */
-const ROUTER_TEXT = narrate({
-  agentName: 'router',
+const ROUTER_BODY = {
   lane: 'bug',
   budgetClass: 'standard',
   confidence: 0.94,
-});
+};
 
 /**
  * A flat diagnose return, as `agents/diagnose.agent.md` documents it. The hook
  * projects `diagnosis.json` from it AND authors `scope.md` from allowedPaths —
  * @diagnose holds no edit tool, so the edit boundary travels in the return.
  */
-const DIAGNOSE_TEXT = narrate({
-  agentName: 'diagnose',
+const DIAGNOSE_BODY = {
   bugScope: 'backend',
   suspectedLayer: FIX_PATH,
   reproCommand: 'npm test -- cursor',
   fixerRecommendation: 'clamp the batch cursor at the final page boundary',
   allowedPaths: [FIX_PATH],
   allowedGlobs: [],
-});
+};
 
 /** A grill return: mode grill, the eight finding arrays, one [UNVERIFIED] item. */
-const GRILL_TEXT = narrate({
-  agentName: 'rubber-duck',
+const GRILL_BODY = {
   mode: 'grill',
   assumptions: ['The cursor never points past the final page.'],
   missingRequirements: [],
@@ -182,7 +96,7 @@ const GRILL_TEXT = narrate({
   blockingQuestions: [],
   recommendedDecisions: ['Clamp the cursor at the last page boundary.'],
   unverifiedItems: ['[UNVERIFIED] the page-size configured in prod'],
-});
+};
 
 /** The full gate path the bug lane must traverse, in order, no gaps. */
 const EXPECTED_PATH = [
@@ -254,19 +168,19 @@ describe('E2E — bug lane: the full journey from no-lane to done', () => {
     );
 
     // 1. @router → lane-set (lane = bug).
-    replaySession(dispatch('toolu_router_1', 'router', ROUTER_TEXT), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_router_1', 'router', ROUTER_BODY), ws.hostCwd);
     snapshot('router');
 
     // 2. @diagnose reproduces the bug and returns the edit boundary. The hook
     // projects diagnosis.json + scope.md, but the bug lane has no diagnosis GATE,
     // so the gate MUST stay at lane-set (its only pre-impl move is the grill).
-    replaySession(dispatch('toolu_diagnose_1', 'diagnose', DIAGNOSE_TEXT), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_diagnose_1', 'diagnose', DIAGNOSE_BODY), ws.hostCwd);
     snapshot('diagnose');
 
     // 3. @rubber-duck grills the diagnosis. grill-result.json lands, and the
     // chain runs finish-grill --> grill-done --present-plan--> plan-approved,
     // where it must HALT for the human.
-    replaySession(dispatch('toolu_grill_1', 'rubber-duck', GRILL_TEXT), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_grill_1', 'rubber-duck', GRILL_BODY), ws.hostCwd);
     snapshot('grill');
 
     // 4. Human: "approve plan" → impl-started (the lane-owned start-impl edge).
@@ -492,8 +406,8 @@ describe('E2E — bug lane negative twin: no diagnosis means no fix, even with t
     // diagnosis.json and its derived scope.md are never written. The grill alone
     // is enough to carry the chain to plan-approved (the grill does not depend on
     // the diagnosis), and "approve plan" opens impl-started.
-    replaySession(dispatch('toolu_router_1', 'router', ROUTER_TEXT), ws.hostCwd);
-    replaySession(dispatch('toolu_grill_1', 'rubber-duck', GRILL_TEXT), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_router_1', 'router', ROUTER_BODY), ws.hostCwd);
+    replaySession(subagentDispatch('toolu_grill_1', 'rubber-duck', GRILL_BODY), ws.hostCwd);
     replaySession(
       [{ hook_event_name: 'UserPromptSubmit', session_id: SESSION_ID, prompt: 'approve plan' }],
       ws.hostCwd,
@@ -535,6 +449,14 @@ describe('E2E — bug lane negative twin: no diagnosis means no fix, even with t
     );
 
     assert.notEqual(r.status, 0, `the implementation dispatch was ALLOWED with no diagnosis:\n${r.stdout}${r.stderr}`);
-    assert.match(r.stdout + r.stderr, /diagnos|scope/i, 'the deny message names neither the diagnosis nor the scope');
+    // The bug lane checks the diagnosis BEFORE the scope (dispatch-gate.mjs), so
+    // the FIRST missing artifact here is always diagnosis.json — assert exactly
+    // that, not a `diagnosis|scope` alternation that would also pass on the wrong
+    // (scope) reason and hide a re-ordering of the guard's checks.
+    assert.match(
+      r.stdout + r.stderr,
+      /diagnosis\.json/i,
+      'the deny message does not name diagnosis.json — the model is not told the fix needs a diagnosis first',
+    );
   });
 });
