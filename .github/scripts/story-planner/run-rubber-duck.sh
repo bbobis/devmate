@@ -3,7 +3,7 @@
 # to a two-revision cap (mirrors the rubber-duck agent's own two-revision limit).
 #
 # Inputs: plan.md (from run-planner.sh)
-# Outputs: critique.md (final critique) and verdict.txt (APPROVE_PLAN | REQUEST_REVISION)
+# Outputs: critique.md (final critique) and verdict.txt (APPROVE_PLAN | NEEDS_REVIEW)
 #
 # Env:
 #   GH_TOKEN, ISSUE_NUMBER, REPO, ADD_DIRS, ACTION_PATH, INVOCATION_MODE
@@ -86,16 +86,18 @@ while [ "$iteration" -lt "$MAX_REVISIONS" ]; do
   bash "$(dirname "$0")/run-planner.sh"
 done
 
-# Two-revision limit reached: fold remaining open items and APPROVE_PLAN
-# (mirrors the rubber-duck agent's terminal-state rule).
-printf '%s\n' "APPROVE_PLAN" > "$VERDICT_OUT"
+# Revision cap reached without an approval: do NOT auto-approve. Mark the plan
+# NEEDS_REVIEW and keep the final critique as the open blockers a human must
+# triage. The plan is still posted — labeled "Needs human review" (see
+# post-comment.sh) — so the grooming signal isn't lost on contested stories.
+printf '%s\n' "NEEDS_REVIEW" > "$VERDICT_OUT"
 {
-  echo "## Rubber-duck critique (two-revision limit reached)"
+  echo "## Plan grill — open blockers (revision cap reached without approval)"
   echo
-  echo "_Remaining open items folded per the two-revision limit. Review the"
-  echo "critique below before implementing._"
+  echo "_The plan grill did not approve after $MAX_REVISIONS revision(s). The"
+  echo "items below are unresolved. A human must review before implementing._"
   echo
   cat "$CRITIQUE_OUT"
 } >> "$CRITIQUE_OUT.tmp"
 mv "$CRITIQUE_OUT.tmp" "$CRITIQUE_OUT"
-echo "run-rubber-duck: reached revision cap; folding open items and APPROVE_PLAN." >&2
+echo "run-rubber-duck: reached revision cap without approval; verdict NEEDS_REVIEW." >&2

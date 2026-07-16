@@ -110,7 +110,7 @@ runs:
         INVOCATION_MODE: ${{ inputs.invocation-mode }}
       run: bash "${{ github.action_path }}/.github/scripts/story-planner/run-planner.sh"
 
-    - name: Rubber-duck critique loop
+    - name: Plan grill (rubber-duck approval)
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.planner-token }}
@@ -123,7 +123,7 @@ runs:
         MAX_REVISIONS: ${{ inputs.max-revisions }}
       run: bash "${{ github.action_path }}/.github/scripts/story-planner/run-rubber-duck.sh"
 
-    - name: Post approved plan as issue comment
+    - name: Post plan + devmate prompt as issue comment
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.planner-token }}

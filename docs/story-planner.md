@@ -1,9 +1,9 @@
 # Story Planner Agent
 
 A label-triggered pipeline that turns a `ready-for-dev` issue into a
-rubber-ducked implementation plan, posted back as a comment. Packaged as a
-portable composite action so any team can consume it with a few lines of
-workflow.
+rubber-ducked backlog-grooming plan plus a paste-able devmate prompt, posted
+back as a comment. Packaged as a portable composite action so any team can
+consume it with a few lines of workflow.
 
 ## How it works
 
@@ -21,10 +21,34 @@ GitHub Actions: issues:labeled + label guard
    4. gather related open + closed issues (dependency context)
    5. discover codebase grounding (scan + agent + merge)  ──► discovery.md
    6. run planner agent (reads discovery.md)  ──► plan.md
-   7. rubber-duck critique loop (2-revision cap) ──► APPROVE_PLAN | REQUEST_REVISION
-   8. post approved plan as issue comment (minimizes prior plan comments)
+   7. plan grill (rubber-duck approval, capped revisions) ──► APPROVE_PLAN | NEEDS_REVIEW
+   8. post plan + devmate prompt as comment (Approved | Needs human review)
    9. upload transcript artifact
 ```
+
+## Posted comment: plan + devmate prompt
+
+The pipeline posts a **backlog-grooming plan, not a detailed implementation
+spec.** A spec written at `ready-for-dev` drifts by the time someone picks the
+story up; a lighter plan (scope, edge/corner cases, dependencies, risks,
+`[UNVERIFIED]` questions) ages better and orients the developer during backlog
+refinement. The detailed spec is deferred to implementation time, produced by
+devmate inside Copilot Chat when the context is fresh.
+
+The comment includes:
+
+- a **Status** line:
+  - `Approved by plan grill.` — the rubber-duck approval gate passed.
+  - `Needs human review — the plan grill did not approve.` — the revision cap
+    was reached without approval; the plan is still posted, with the grill's
+    **open blockers** surfaced for a human to triage.
+- the **plan** itself.
+- a **Paste into devmate** block — a short, pointer-based prompt the developer
+  copies into Copilot Chat to kick off devmate's lane (rediscover → spec → TDD),
+  treating the comment as context rather than a final spec.
+
+The comment is stamped with the `<!-- devmate-story-plan-v1 -->` marker and
+prior plan comments are minimized on reruns so the thread stays readable.
 
 ## Discovery stage (codebase grounding before the planner)
 
