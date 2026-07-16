@@ -210,9 +210,20 @@ const AFFIRMATIVE_MARKERS = Object.freeze([
 const CHANGE_SIGNAL_RE =
   /\b(?:but|except|however|though|instead|missing|misses|needs?|add|handle|fix|change|update|remove|rename|should|must|wrong|broken|blocker|wait|first|before|still|contradicts|tighten|split|cover|unspecified|overkill|vague|ignores)\b/;
 
-/** Non-blocking markers: the noted change explicitly does not gate approval. */
+/**
+ * Non-blocking markers: the noted change explicitly does not gate approval.
+ *
+ * Bare "later" is deliberately NOT here. A change deferred to "later"
+ * ("approve spec — but rename the module later") is still a PENDING change, so
+ * the safety half of default-to-revision applies and it must NOT read as an
+ * approve-now-fix-later nit. This keeps the interpreter aligned with the
+ * deterministic Stage-1 listener, which defers any inexact approval rather than
+ * advancing the sole human gate (see the hgp trailing-prose case in
+ * fixtures/revisions.json). Genuine follow-up markers ("follow-up", "can wait",
+ * "nit", "minor", "no need to change") remain.
+ */
 const NON_BLOCKING_RE =
-  /don'?t block|non-?blocking|not blocking|\bnits?\b|\bminor\b|can wait|\blater\b|follow-?up|no need to (?:fix|change|block)/;
+  /don'?t block|non-?blocking|not blocking|\bnits?\b|\bminor\b|can wait|follow-?up|no need to (?:fix|change|block)/;
 
 /** Explicit abandon markers (confirmation is presumed granted by fixtures). */
 const ABANDON_RE = /\b(?:abandon|scrap|drop)\b.{0,12}\b(?:it|this|that|task|thing)\b/;

@@ -195,8 +195,10 @@ const PHRASES = /** @type {const} */ (['approve spec', 'approve pr', 'approve pl
  *
  * `friendlyNoop` marks a phrase that is a no-op WITHOUT a "did not advance"
  * refusal, because the gate is already where the phrase would take it (the hook's
- * idempotent branches: "approve pr" at pr-ready).
- * @type {{ lane: 'feature'|'bug', gate: string, advances: Record<string, string>, friendlyNoop?: string[] }[]}
+ * idempotent branches: "approve pr" at pr-ready). `friendlyHints` carries, per
+ * such phrase, the POSITIVE idempotent guidance the hook must surface — so a
+ * no-op is proven to CONFIRM the already-there state, not merely stay silent.
+ * @type {{ lane: 'feature'|'bug', gate: string, advances: Record<string, string>, friendlyNoop?: string[], friendlyHints?: Record<string, RegExp> }[]}
  */
 const WRONG_GATE_MATRIX = [
   { lane: 'feature', gate: 'no-lane', advances: {} },
@@ -210,7 +212,13 @@ const WRONG_GATE_MATRIX = [
     advances: { 'approve spec': 'impl-started', 'approve plan': 'impl-started' },
   },
   { lane: 'feature', gate: 'verification-passed', advances: { 'approve pr': 'pr-ready' } },
-  { lane: 'feature', gate: 'pr-ready', advances: {}, friendlyNoop: ['approve pr'] },
+  {
+    lane: 'feature',
+    gate: 'pr-ready',
+    advances: {},
+    friendlyNoop: ['approve pr'],
+    friendlyHints: { 'approve pr': /pr is already marked ready/i },
+  },
 ];
 
 describe('E2E — human gate protocol: wrong-gate approval matrix', { concurrency: false }, () => {
@@ -223,6 +231,7 @@ describe('E2E — human gate protocol: wrong-gate approval matrix', { concurrenc
     for (const phrase of PHRASES) {
       const legalTo = cell.advances[phrase];
       const friendly = (cell.friendlyNoop ?? []).includes(phrase);
+      const friendlyHint = cell.friendlyHints?.[phrase];
       const verb = legalTo ? `advances to ${legalTo}` : friendly ? 'is a friendly no-op' : 'is refused with guidance';
 
       it(`${cell.lane}/${cell.gate}: "${phrase}" ${verb}`, { timeout: 30000 }, () => {
@@ -243,10 +252,20 @@ describe('E2E — human gate protocol: wrong-gate approval matrix', { concurrenc
           assert.equal(gateOf(ws), cell.gate, 'an illegal/no-op phrase moved the gate');
           if (friendly) {
             assert.doesNotMatch(ctx, /did not advance the gate/i, 'a friendly no-op must not read as a refusal');
+            // A no-op must POSITIVELY confirm the idempotent state, not stay silent.
+            assert.ok(friendlyHint, `no friendlyHint declared for the no-op "${phrase}" at ${cell.gate}`);
+            assert.match(ctx, friendlyHint, 'a friendly no-op did not surface its idempotent guidance');
           } else {
-            // The refusal must be visible AND name the legal next gates (anchor).
+            // The refusal must be visible AND carry the legal next gates ON ITS
+            // OWN line — not merely somewhere in the enveloped text, where the
+            // always-on <devmate-state> anchor also prints "legal next gates:".
+            // Scoping to the refusal line proves the guidance itself names them.
             assert.match(ctx, /did not advance the gate/i, 'an illegal approval was silently ignored');
-            assert.match(ctx, /legal next gates:/i, 'the refusal did not surface the legal next gates');
+            assert.match(
+              ctx,
+              /did not advance the gate:[^\n]*legal next gates:/i,
+              'the refusal line itself did not surface the legal next gates (only the anchor may have)',
+            );
           }
         }
       });
@@ -400,9 +419,14 @@ describe('E2E — human gate protocol: an approval with trailing prose does NOT 
   // DECISION (pinned): the deterministic layer approves only the EXACT phrase.
   // "approve spec — but rename the module later" is not that phrase, so the hook
   // does not advance the gate; it emits a near-miss hint and defers the turn to
-  // the LLM stage. This diverges from a looser interpreter on purpose — a gate
-  // is devmate's one human checkpoint, and a trailing afterthought is exactly the
-  // ambiguity that must reach a human/LLM rather than silently open implementation.
+  // the LLM stage. Both layers agree on this phrasing: the gate-robustness eval's
+  // Stage-2 proxy (evals/gate-robustness/scorer.mjs) also classifies it as
+  // revise-artifact — a change deferred to "later" is still a pending change, so
+  // default-to-revision keeps it at spec-draft. Neither the deterministic Stage 1
+  // nor the interpreted Stage 2 ever auto-advances devmate's one human checkpoint
+  // on a trailing afterthought; the ambiguity reaches a human/LLM instead of
+  // silently opening implementation. (See the hgp-trailing-prose-approval case in
+  // fixtures/revisions.json, driven verbatim by this suite.)
   it('emits a near-miss hint, defers the turn, and leaves the gate at spec-draft', () => {
     const { ws } = seedAtGate({ gate: 'spec-draft' });
     const result = submitPrompt(ws, 'approve spec — but rename the module later');
