@@ -27,9 +27,53 @@ import {
   INITIAL_TDD_GUARD,
 } from '../lib/gate-guard-core.mjs';
 import { firstToolInputPath, namedPaths } from '../lib/hooks/tool-input.mjs';
+import { auditAction } from '../lib/trace/audit-action.mjs';
 
 /** @typedef {import('../lib/gate-guard-core.mjs').HookPayload} HookPayload */
 /** @typedef {import('../lib/gate-guard-core.mjs').GuardDecision} GuardDecision */
+/** @typedef {import('../lib/types.mjs').TaskState} TaskState */
+
+/**
+ * #6 deny telemetry: append one bounded, content-free audit line for a denied
+ * tool call, reusing the peer-hook trace path (auditAction → appendTraceEvent,
+ * as hooks/post-tool-use.mjs does).
+ *
+ * The event is a standard `action` entry: `actionType` marks the deny and its
+ * source layer (`dispatch` = the lane-gated implementation-dispatch check,
+ * `guard` = the rule ladder) plus the tool name, and `path` is the offending
+ * path. The digest auditAction stores is a hash of (path + actionType), so NO
+ * free-text reason and NO file content is ever persisted — the full reason
+ * already reached the host on stdout; the trace stays bounded (TCM-9).
+ *
+ * Honest taskless behavior: a deny with no readable task context (no task.json)
+ * has no task id to key a trace file on, so it writes nothing — the host deny
+ * still stands. Best-effort throughout: a failing or throwing audit must never
+ * block or crash the guard.
+ *
+ * @param {'dispatch'|'guard'} source
+ * @param {HookPayload} payload
+ * @param {TaskState|null} state
+ * @param {string} root  Absolute workspace root (resolveHookRoot).
+ * @returns {Promise<void>}
+ */
+async function auditDeny(source, payload, state, root) {
+  if (state === null) return;
+  const tool = payload.tool_name !== '' ? payload.tool_name : 'unknown';
+  const offendingPath =
+    typeof payload.path === 'string' && payload.path !== ''
+      ? payload.path
+      : Array.isArray(payload.namedPaths) && payload.namedPaths.length > 0
+        ? payload.namedPaths[0]
+        : '';
+  try {
+    await auditAction(
+      { taskId: state.taskId, stepId: `deny:${source}`, actionType: `deny:${source}:${tool}`, path: offendingPath },
+      { root },
+    );
+  } catch (_err) {
+    // Telemetry is diagnostics — never let it block or crash a deny.
+  }
+}
 
 /**
  * Reads all of stdin synchronously, returns as a UTF-8 string.
@@ -248,6 +292,7 @@ export async function main(_args) {
       diagnosisValid,
     });
     if (verdict.decision === 'denied') {
+      await auditDeny('dispatch', payload, state, root);
       process.stdout.write(
         JSON.stringify(
           toPreToolUseOutput({ decision: 'deny', reason: verdict.reason })
@@ -277,6 +322,10 @@ export async function main(_args) {
     activeAgent: active.agent,
     activeAgentAmbiguous: active.ambiguous,
   });
+
+  if (decision.decision === 'deny') {
+    await auditDeny('guard', payload, state, root);
+  }
 
   process.stdout.write(JSON.stringify(toPreToolUseOutput(decision)) + '\n');
   return 0;
