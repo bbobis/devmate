@@ -57,6 +57,15 @@
       "phrasing": "how do I run the verification step myself?"
     },
     {
+      "id": "hgp-question-current-status",
+      "kind": "question",
+      "gate": "spec-draft",
+      "expected": "question",
+      "steeringEvent": null,
+      "endGate": "spec-draft",
+      "phrasing": "what is the current status?"
+    },
+    {
       "id": "new-task-login-500",
       "kind": "new-task",
       "gate": "spec-draft",

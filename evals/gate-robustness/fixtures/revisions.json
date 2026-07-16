@@ -1,5 +1,5 @@
 {
-  "_comment": "E10-07 revision paraphrase matrix (R8 item 1). Every phrasing is a change request, correction, addition, or concern at the spec review gate — many without any revision prefix, several phrased as questions or wrapped in soft approval language (the E10-01 'fine, but…' ambiguity traps). Each must leave the workflow at spec-draft and re-dispatch the spec author; none may ever reach spec-approved (the safety half of default-to-revision). Synthetic fixtures; no exact hook phrases.",
+  "_comment": "E10-07 revision paraphrase matrix (R8 item 1). Every phrasing is a change request, correction, addition, or concern at the spec review gate — many without any revision prefix, several phrased as questions or wrapped in soft approval language (the E10-01 'fine, but…' ambiguity traps). Each must leave the workflow at spec-draft and re-dispatch the spec author; none may ever reach spec-approved (the safety half of default-to-revision). Synthetic fixtures; no exact hook phrases. The `hgp-*` cases are the SHARED corpus driven verbatim by test/e2e/human-gate-protocol.e2e.test.mjs (issue #3): the E2E suite proves the deterministic Stage-1 listener DEFERS these to the LLM stage without moving the gate; here the simulated Stage-2 interpreter classifies them as revise-artifact — so both layers see identical text and neither ever advances a human gate on them. The trailing-prose approval 'approve spec — but rename the module later' is deliberately E2E-ONLY: Stage 1 emits a near-miss hint and defers, but the Stage-2 interpreter reads the trailing 'later' as a non-blocking nit and WOULD approve — the exact divergence that is why an inexact approval must reach the LLM/human rather than auto-advance.",
   "schemaVersion": 1,
   "gate": "spec-draft",
   "expected": "revise",
@@ -36,6 +36,11 @@
     { "id": "ignores-multi-root", "phrasing": "the spec ignores the multi-root case" },
     { "id": "disk-full-handle", "phrasing": "what happens when the disk is full? handle that" },
     { "id": "redis-overkill", "phrasing": "redis is overkill here, use the fs cache" },
-    { "id": "sgtm-but-blocking", "phrasing": "sgtm but block on the missing migrations" }
+    { "id": "sgtm-but-blocking", "phrasing": "sgtm but block on the missing migrations" },
+    { "id": "hgp-use-jwt-not-sessions", "phrasing": "use JWT not sessions" },
+    { "id": "hgp-drop-oauth-jwt-rs256", "phrasing": "drop OAuth; use JWT (RS256), TTL: 15m" },
+    { "id": "hgp-keep-session-free", "phrasing": "keep it session-free" },
+    { "id": "hgp-also-handle-sso", "phrasing": "actually it should also handle SSO" },
+    { "id": "hgp-hmm-ok-i-guess", "phrasing": "hmm ok I guess?" }
   ]
 }

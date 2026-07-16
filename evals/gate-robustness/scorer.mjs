@@ -227,7 +227,7 @@ const NEW_TASK_RE =
  * "shouldn't this handle X?") stay change requests per default-to-revision.
  */
 const INFORMATIONAL_RE =
-  /^(?:where|which|when|how do|how does|what does|what's|whats)\b|can you explain|why did (?:we|you)\b/;
+  /^(?:where|which|when|how do|how does|what does|what is|what are|what's|whats)\b|can you explain|why did (?:we|you)\b/;
 
 /** Confidence for a lexicon-matched classification. */
 // TODO: calibrate interpreter confidences after baseline runs — provisional
