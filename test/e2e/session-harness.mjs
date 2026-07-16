@@ -126,20 +126,43 @@ export function rebase(event, hostCwd) {
 
 /**
  * Spawn one hook exactly as the host does.
+ *
+ * `opts` is a purely additive test seam (issue #8) with two knobs, both of which
+ * mimic something the real host controls:
+ *   - `env`       extra environment variables layered over the process env — the
+ *                 host owns a hook's environment, and this is the ONLY way the
+ *                 fault seam (lib/testing/fault-injection.mjs) is ever armed.
+ *   - `timeoutMs` overrides the spawn timeout. A short value stands in for the
+ *                 host's own hook-timeout kill: when a hook hangs, the host
+ *                 SIGTERMs it, and spawnSync's timeout does exactly that. This is
+ *                 HARNESS-EMULATED — devmate does not implement the host timeout.
+ *
+ * When a spawn is killed by its timeout, spawnSync returns a null exit status and
+ * a `signal` (SIGTERM); `signal` is surfaced so a caller can tell a host-killed
+ * hang apart from an ordinary exit. `status` keeps its historical `?? 1` fallback
+ * so existing callers that only compare against 0 are unaffected.
  * @param {string} script
  * @param {string[]} args
  * @param {unknown} payload
  * @param {string} cwd
- * @returns {{ script: string, status: number, stdout: string, stderr: string }}
+ * @param {{ env?: Record<string, string>, timeoutMs?: number }} [opts]
+ * @returns {{ script: string, status: number, signal: string|null, stdout: string, stderr: string }}
  */
-export function spawnHook(script, args, payload, cwd) {
+export function spawnHook(script, args, payload, cwd, opts = {}) {
   const r = spawnSync('node', [join(REPO_ROOT, script), ...args], {
     input: JSON.stringify(payload),
     cwd,
     encoding: 'utf8',
-    timeout: 20000,
+    timeout: opts.timeoutMs ?? 20000,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
   });
-  return { script, status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  return {
+    script,
+    status: r.status ?? 1,
+    signal: r.signal ?? null,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+  };
 }
 
 /**

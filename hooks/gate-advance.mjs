@@ -50,6 +50,7 @@ import { extractAgentResult } from '../lib/hooks/agent-result.mjs';
 import { createTextCapture, EXIT_BLOCK, writeHookOutput } from '../lib/hooks/output-schema.mjs';
 import { resolveAgentName } from '../lib/hooks/subagent-index.mjs';
 import { readTaskState, STATE_PATH, writeTaskState } from '../lib/task-state.mjs';
+import { injectFaultIfArmed } from '../lib/testing/fault-injection.mjs';
 import { appendTraceEvent } from '../lib/trace/append.mjs';
 import { artifactsFor } from '../lib/workflow/agent-contracts.mjs';
 import { persistWorkerReturn } from '../lib/workflow/persist-worker-return.mjs';
@@ -384,6 +385,13 @@ export async function handlePostToolUse(event, opts = {}) {
     state = stamped;
     dirty = true;
   }
+
+  // TEST-ONLY seam (#8): fault the hook AFTER step 1 has written the artifact to
+  // disk but BEFORE the gate advances, so the injection suite can prove the gate
+  // never half-moves and the next invocation catches up. Inert unless the seam's
+  // env var is armed for this site — one Set lookup in production. See
+  // lib/testing/fault-injection.mjs.
+  injectFaultIfArmed('gate-advance');
 
   // 3. Walk the lane's chain as far as the evidence on disk allows.
   const advanced = await advanceAlongLane(state, {

@@ -149,7 +149,7 @@ their respective events:
 | `hooks/approval-listener.mjs`           | `UserPromptSubmit` | Runs the skill matcher and (on new-task/steer turns) emits the skill menu (see the Skill matching section below); prints the model-visible workflow-state anchor block on every submitted prompt (see the Workflow-state anchor section below); then detects the exact-phrase approval fast path (see table below) and drives gate transitions through gatectl, stamping actor hook-exact-phrase and the raw prompt as evidence on the gate_transition trace event. Free-form approvals are instead classified by the orchestrator, which issues the gatectl advance itself (E10-03). Non-approval prompts pass through otherwise untouched. |
 | `hooks/gate-advance.mjs`                | `PostToolUse`      | Advances the workflow gate on EVIDENCE, and authors the lane's scope contract. Projects a subagent's return (carried in tool_response) onto the canonical artifact its gate precondition reads — router-result.json, grill-result.json, critique-result.json, discovery-merged.json, plan.json, diagnosis.json — then walks the lane's chain as far as the artifacts on disk allow, stopping at the first unmet precondition. Derives .devmate/session/&lt;taskId&gt;/scope.md from the planner's file list (feature, chore) or the diagnosis's allowedPaths/allowedGlobs (bug), because no agent that scopes the work has a tool to write a file. Also stamps artifactHashes.spec + specDigest from spec.md, which spec-writer cannot compute, and refuses to re-stamp once the spec is approved. Human gates are never in a chain: the feature lane halts at spec-draft and the bug lane at plan-approved. Best-effort — it never blocks a tool call. |
 | `hooks/spec-integrity-guard.mjs`        | `PostToolUse`      | Detects post-approval edits to .devmate/session/spec.md. When the file's SHA-256 differs from the recorded digest and the gate is spec-approved, rolls the gate back to spec-draft, updates the digest, appends spec_invalidated and gate_transition trace events, and prints a stdout warning the human must respond to with another approve spec. |
-| `hooks/contract-validator.mjs`          | `PostToolUse`      | Validates routed artifact contracts for worker returns, diagnosis, grill, and critique outputs. Routed contract violations write a `contract_violation` trace event and return exit 1 to halt the lane; unrouted payloads are no-ops and malformed hook stdin is swallowed with exit 0.                                                                 |
+| `hooks/contract-validator.mjs`          | `PostToolUse`      | Validates routed artifact contracts for worker returns, diagnosis, grill, and critique outputs. Routed contract violations write a `contract_violation` trace event and return exit 2 to block — the only non-zero code VS Code treats as blocking (exit 1 is a non-blocking warning); unrouted payloads are no-ops and malformed hook stdin is swallowed with exit 0.                                                                 |
 | `hooks/subagent-budget-guard.mjs start` | `SubagentStart`    | Lane-gated implementation dispatch (HITL-1): for an implementation agent (fullstack and the persona wrappers backend/frontend/editor) the start is denied unless the lane's gate and artifacts exist — impl-started plus recorded spec metadata (feature), a valid diagnosis result and a scope.md (bug), or a scope.md (chore); a missing task.json denies for these agents, while analysis dispatches keep the pre-spec fail-open. Then reads activeSubagents from task.json — if the count is at or above devmate.config.json maxConcurrentAgents (default 3), returns a typed deny and the start is rejected; otherwise persists an incremented count and appends a subagent_start trace event with the active count after the increment. |
 | `hooks/subagent-budget-guard.mjs stop`  | `SubagentStop`     | Decrements activeSubagents in task.json (floored at 0 — the counter never goes negative), then appends a subagent_complete trace event carrying the durationMs and the post-decrement active count.                                                                                                                                                 |
 
@@ -314,7 +314,9 @@ Behavior:
 - Routed path parse/read failure is treated as a contract violation.
 - Routed validation failure prints a structured stderr report naming the
   contract, offending path, and field-level errors; appends a
-  `contract_violation` trace event; and returns exit `1` to halt the lane.
+  `contract_violation` trace event; and returns exit `2` to block. Exit `2` is
+  the only non-zero code VS Code treats as blocking — exit `1` would be a
+  non-blocking warning whose stdout the host never reads.
 - Routed valid artifacts return exit `0`.
 
 This keeps PostToolUse resilient for non-contract failures while making routed
@@ -465,8 +467,9 @@ every hook entrypoint ends by calling into it.
 
 Two consequences that are easy to get backwards, and that devmate got backwards:
 
-- **Exit 1 does not block.** The contract validator returned `1` on a malformed
-  worker return and the lane carried on regardless.
+- **Exit 1 does not block.** The contract validator originally returned `1` on a
+  malformed worker return, so the lane carried on regardless; it now returns `2`,
+  the only non-zero code that blocks.
 - **On any non-zero exit, nobody reads stdout.** A message printed to stdout
   alongside a non-zero exit reaches no one. Put it on stderr.
 
