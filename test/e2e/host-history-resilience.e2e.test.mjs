@@ -638,6 +638,16 @@ function defineCompactionSuite(tc) {
       const artifact = JSON.parse(readFileSync(join(dir, jsonFiles[0]), 'utf8'));
       assert.equal(artifact.taskId, taskId, 'the artifact belongs to a different task');
 
+      if (tc.gate === 'impl-started') {
+        // #22: the artifact must read the CANONICAL per-task trace — with AC1
+        // completed, nextAction derives from that step, never the generic
+        // "check nextAction field" fallback that pointed at itself.
+        assert.ok(
+          artifact.nextAction.startsWith('Continue after completed step:'),
+          `nextAction is not trace-derived: ${artifact.nextAction}`,
+        );
+      }
+
       assert.equal(readState(ws.root).workflowGate, tc.gate, 'compaction moved the gate');
     });
 
