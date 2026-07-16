@@ -20,11 +20,20 @@
  *      crash after a `writeJsonFileAtomic` still leaves a complete file, because
  *      the write is atomic.
  *   3. **Surfacing on a host-honored channel.** Silence is the bug this whole
- *      layer replaces. A dispatch that produced no evidence exits `2` with the
- *      reason on stderr — the stream VS Code shows the model. A best-effort I/O
- *      fault (trace, crash) exits `0` but is loud on stderr — the Output panel a
- *      human reads. The channel is chosen to match what the host actually does
- *      with each exit code, never invented.
+ *      layer replaces, and the channel is chosen to match what the host actually
+ *      does with each exit code, never invented:
+ *        - A dispatch that produced no evidence exits `2` with the reason on
+ *          stderr — the stream VS Code shows the model.
+ *        - A caught handler crash exits `0` and emits MODEL-VISIBLE catch-up
+ *          guidance as `additionalContext` (the documented exit-0 channel); the
+ *          raw error stays on stderr (human Output panel), with no stack.
+ *        - A best-effort trace-write fault does NOT propagate: the gate still
+ *          advances and the model gets the normal advance anchor, while a
+ *          trace-specific warning is loud on stderr.
+ *        - A host-killed timeout can emit nothing after SIGTERM (there is no
+ *          exit-0 path), so model visibility comes from the NEXT invocation's
+ *          catch-up — this suite asserts exactly that, and never claims same-turn
+ *          model visibility for a kill.
  *
  * ## The exit-code correction
  *
@@ -59,7 +68,7 @@
  * monoroot layout, seeding nothing under `state/` beyond what a test stands in for.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { before, describe, it } from 'node:test';
 import { transitionGate } from '../../lib/gate-transitions.mjs';
@@ -148,6 +157,35 @@ function plainReturn(toolUseId = 'toolu_catchup__vscode-1') {
     tool_response: 'ok',
     tool_use_id: toolUseId,
   };
+}
+
+/**
+ * Parse a hook's stdout the way VS Code does on exit 0: exactly ONE JSON
+ * document, or nothing. Returns the parsed object (or null when stdout is empty),
+ * and throws if stdout is non-empty but not a single JSON value — which is itself
+ * the contract the host enforces (mixed text+JSON is dropped whole).
+ * @param {string} stdout
+ * @returns {Record<string, any>|null}
+ */
+function parseHookStdout(stdout) {
+  const trimmed = stdout.trim();
+  if (trimmed === '') return null;
+  return JSON.parse(trimmed);
+}
+
+/**
+ * The model-visible `additionalContext` a PostToolUse hook emitted on exit 0, or
+ * null if it emitted no context envelope.
+ * @param {string} stdout
+ * @returns {string|null}
+ */
+function additionalContextOf(stdout) {
+  const json = parseHookStdout(stdout);
+  const hso = json?.hookSpecificOutput;
+  if (hso && typeof hso === 'object' && typeof hso.additionalContext === 'string') {
+    return hso.additionalContext;
+  }
+  return null;
 }
 
 // A clean router return that classifies the feature lane above the confidence
@@ -590,15 +628,35 @@ describe('E2E — a crash mid-advance leaves the gate unmoved, then the next cal
     assert.equal(crashed.status, 0, `a crashed gate-advance blocked the tool call:\n${crashed.stderr}`);
   });
 
-  it('surfaced the crash on stderr (visible warning)', () => {
+  it('surfaced the crash detail on stderr (human Output panel only — no stack)', () => {
     assert.match(crashed.stderr, /injected crash|fault-injection/i);
+    // The raw error is human-only; a stack must never leak, not even to stderr.
+    // A V8 stack frame is a line of the form "\n    at ...", so its absence is a
+    // plain substring check (no regex — avoids a ReDoS-flagged pattern).
+    assert.ok(!crashed.stderr.includes('\n    at '), 'a stack trace leaked to stderr');
   });
 
-  it('wrote the artifact whole — an atomic write survives the crash after it', () => {
-    assert.ok(
-      existsSync(join(ws.root, '.devmate', 'state', 'discovery-merged.json')),
-      'discovery-merged.json should be on disk despite the crash',
-    );
+  it('emits model-visible catch-up guidance as ONE valid JSON additionalContext (exit-0)', () => {
+    // #8: the model must NOT see a clean, successful no-op when the gate silently
+    // failed to advance. On exit 0 VS Code parses stdout as one JSON document; the
+    // recovery guidance rides the documented additionalContext channel.
+    const ctx = additionalContextOf(crashed.stdout);
+    assert.ok(ctx !== null, `expected model-visible additionalContext on stdout; got: ${JSON.stringify(crashed.stdout)}`);
+    // Actionable recovery/catch-up guidance — the next call heals the gate.
+    assert.match(ctx, /recoverable/i);
+    assert.match(ctx, /next tool call|catches the gate up|catch/i);
+    // No stack, path, or raw error detail bleeds into the model-visible channel.
+    assert.doesNotMatch(ctx, /injected crash|InjectedFaultError|\.mjs/i);
+  });
+
+  it('wrote the artifact whole and parseable — an atomic write survives the crash after it', () => {
+    const artifactPath = join(ws.root, '.devmate', 'state', 'discovery-merged.json');
+    assert.ok(existsSync(artifactPath), 'discovery-merged.json should be on disk despite the crash');
+    // Atomicity beyond existence: the file parses as complete JSON with the merged
+    // shape, and no partial `.tmp` sibling from the atomic write remains.
+    const parsed = JSON.parse(readFileSync(artifactPath, 'utf8'));
+    assert.ok(Array.isArray(parsed.claims), 'the merged artifact must be complete (claims[] present)');
+    assert.equal(existsSync(artifactPath + '.tmp'), false, 'a partial .tmp sibling was left behind');
   });
 
   it('left the gate at lane-set — not half-advanced', () => {
@@ -631,14 +689,18 @@ describe('E2E — a hung hook is killed by the host, and catch-up still heals th
     fireGateAdvance(ws.hostCwd, subagentReturn('router', ROUTER_OK, 'toolu_router__vscode-1'));
     assert.equal(readState(ws.root).workflowGate, 'lane-set', 'precondition: router advanced to lane-set');
 
-    // Arm a hang and give the spawn a short timeout. devmate does not implement a
-    // hook timeout — the host does; the short spawn timeout stands in for the
-    // host's SIGTERM kill (HARNESS-EMULATED). The seam blocks AFTER the atomic
-    // artifact write, so the file is whole when the kill lands.
+    // Arm a hang and give the spawn a generous-but-bounded timeout. devmate does
+    // not implement a hook timeout — the host does; the spawn timeout stands in
+    // for the host's SIGTERM kill (HARNESS-EMULATED). The seam blocks for 60s
+    // AFTER the atomic artifact write, so 4000ms is far below the hang yet leaves
+    // ample headroom over node cold-start + gate-advance + projection on a slow
+    // CI runner (the 1500ms window could race the atomic write on the slowest
+    // Windows/macOS matrix — this makes the kill deterministic without waiting
+    // anywhere near the full 60s hang).
     hung = fireGateAdvance(
       ws.hostCwd,
       subagentReturn('discovery', DISCOVERY_OK, 'toolu_discovery__vscode-1'),
-      { env: { DEVMATE_FAULT: 'gate-advance:timeout' }, timeoutMs: 1500 },
+      { env: { DEVMATE_FAULT: 'gate-advance:timeout' }, timeoutMs: 4000 },
     );
   });
 
@@ -646,17 +708,35 @@ describe('E2E — a hung hook is killed by the host, and catch-up still heals th
     assert.equal(hung.signal, 'SIGTERM', `expected a SIGTERM kill; got status=${hung.status} signal=${hung.signal}`);
   });
 
-  it('still wrote the artifact whole before it hung', () => {
-    assert.ok(existsSync(join(ws.root, '.devmate', 'state', 'discovery-merged.json')));
+  it('emitted nothing on stdout — no process can speak to the model after SIGTERM', () => {
+    // A host-killed hook is fundamentally different from a caught crash: there is
+    // no exit-0 path, so NO additionalContext can be emitted this turn. Model
+    // visibility for a timeout comes only from the NEXT invocation's catch-up
+    // (asserted below). This test pins that we do not (and cannot) claim same-turn
+    // model visibility for a kill.
+    assert.equal(hung.stdout.trim(), '', `a killed hook must not have emitted stdout; got: ${JSON.stringify(hung.stdout)}`);
+  });
+
+  it('still wrote the artifact whole and parseable before it hung', () => {
+    const artifactPath = join(ws.root, '.devmate', 'state', 'discovery-merged.json');
+    assert.ok(existsSync(artifactPath));
+    const parsed = JSON.parse(readFileSync(artifactPath, 'utf8'));
+    assert.ok(Array.isArray(parsed.claims), 'the merged artifact must be complete (claims[] present)');
+    assert.equal(existsSync(artifactPath + '.tmp'), false, 'a partial .tmp sibling was left behind');
   });
 
   it('left the gate at lane-set — a killed hook advanced nothing', () => {
     assert.equal(readState(ws.root).workflowGate, 'lane-set');
   });
 
-  it('heals on the next (unarmed) invocation', () => {
-    fireGateAdvance(ws.hostCwd, plainReturn('toolu_heal__vscode-1'));
+  it('heals on the next (unarmed) invocation, with model-visible catch-up guidance', () => {
+    const healed = fireGateAdvance(ws.hostCwd, plainReturn('toolu_heal__vscode-1'));
     assert.equal(readState(ws.root).workflowGate, 'discovery-done');
+    // The recovery for a kill is on the NEXT turn: the healing advance emits its
+    // normal model-visible anchor naming the gate it caught up to.
+    const ctx = additionalContextOf(healed.stdout);
+    assert.ok(ctx !== null, `expected model-visible catch-up guidance on the next call; got: ${JSON.stringify(healed.stdout)}`);
+    assert.match(ctx, /discovery-done/);
   });
 });
 
@@ -694,10 +774,23 @@ describe('E2E — a broken trace write does not roll back the gate it recorded',
     assert.equal(ran.status, 0, ran.stderr);
   });
 
-  it('was loud about the failed write on stderr', () => {
+  it('emits the normal advance anchor to the model — a trace loss is not a crash', () => {
+    // The scoped best-effort guard keeps the trace failure OUT of main()'s catch,
+    // so the model gets the ordinary gate-advanced anchor (not the recovery text
+    // reserved for a genuine handler crash).
+    const ctx = additionalContextOf(ran.stdout);
+    assert.ok(ctx !== null, `expected the normal advance anchor on stdout; got: ${JSON.stringify(ran.stdout)}`);
+    assert.match(ctx, /gate advanced on evidence/i);
+    assert.doesNotMatch(ctx, /recoverable error/i);
+  });
+
+  it('was loud about the failed write with a trace-SPECIFIC signal on stderr', () => {
     // No "gap" placeholder is synthesized for a failed append — the honest signal
-    // is this stderr warning and the missing line itself. (The trace path is a
-    // directory here, so there is deliberately no readable .jsonl to inspect.)
-    assert.match(ran.stderr, /gate-advance/i);
+    // is this structured stderr warning and the missing line itself. The oracle is
+    // trace-specific (the gate_transition trace_error event + EISDIR cause), not a
+    // broad `/gate-advance/i` that any unrelated handler throw would also satisfy.
+    assert.match(ran.stderr, /"event":"gate-advance\.trace_error"/);
+    assert.match(ran.stderr, /"type":"gate_transition"/);
+    assert.match(ran.stderr, /EISDIR|illegal operation on a directory/i);
   });
 });

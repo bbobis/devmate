@@ -50,6 +50,12 @@ test('armedFaultFor › an unknown mode is inert even for a known site', () => {
   assert.equal(armedFaultFor('gate-advance', envWith('gate-advance:explode')), null);
 });
 
+test('armedFaultFor › an unknown ASKING site can never be armed', () => {
+  // The asking site must itself be a known FAULT_SITES member, so a call site the
+  // seam does not recognize is inert even if the env names it exactly.
+  assert.equal(armedFaultFor('not-a-site', envWith('not-a-site:crash')), null);
+});
+
 test('armedFaultFor › a malformed value (no colon, edge colons) is inert', () => {
   for (const bad of ['gate-advance', 'gate-advance:', ':crash', 'gate-advance:crash:extra']) {
     assert.equal(armedFaultFor('gate-advance', envWith(bad)), null, `should be inert: ${JSON.stringify(bad)}`);
