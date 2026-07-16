@@ -34,6 +34,7 @@ the systematic net underneath them (issue #9).
 | Run | Mode | Cells |
 | --- | --- | --- |
 | Per-commit (`npm test`) | `smoke` (default) | Hand-pinned golden cells + any cell whose gate/steering-event name appears in the working diff of `lib/`, `hooks/`, `scripts/` |
+| Branch/PR runs on a clean checkout | `smoke` + `DEVMATE_MATRIX_BASE=<ref>` (e.g. `origin/main`) | Additionally unions the merge-base diff `<ref>...HEAD` of the runtime dirs, so committed runtime changes select their cells even with a clean working tree. Opt-in: unset keeps default runs golden-only-fast |
 | Nightly (`.github/workflows/eval-nightly.yml`, job `transition-matrix`) | `DEVMATE_MATRIX=full` | Every cell |
 
 ## Guardrails against a broken generator

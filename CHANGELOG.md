@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added - #23: merge-base-aware changed-cells selection for the transition matrix
+- **The changed-cells heuristic was inert on clean checkouts.** It read only the working diff against HEAD, so a CI checkout of a committed branch always selected the golden subset alone (flagged in PR #19's review, tracked as its own issue). When the new opt-in environment knob names a base ref, the matrix now unions the merge-base diff of the runtime dirs into the selection input, so a branch's COMMITTED runtime changes select their cells on a clean tree. Unset, nothing changes — default runs stay golden-only-fast by design, so a long-lived branch's accumulated diffs never slow down every local npm test. Documented in the docs/transition-matrix.md budget table; both halves stay best-effort (a missing ref or no git yields no selection, never a failure).
+
 ### Fixed - #22: compaction artifacts now read the canonical per-task trace
 - **Every production compaction artifact's nextAction was the generic fallback.** The compact-and-reclaim path built the artifact with no trace location, so the builder fell back to a flat trace file the runtime never writes — the canonical trace lives per-task under the state directory's trace folder. nextAction therefore always read "check nextAction field" (pointing at itself), and trace-derived context (decision events, unresolved halts) was always empty. The builder is now pointed at the per-task trace directory derived from the same task-state path the call already anchors on; both production callers (the PreCompact hook path and the budget hook's automatic recovery) go through it.
 - **Pinned at both levels.** A unit test drives compactAndReclaim over the production layout and asserts nextAction derives from the last completed step; the compaction round-trip E2E's impl-started case (with AC1 completed via the real script) now asserts the artifact carries the trace-derived continuation, not the fallback.
