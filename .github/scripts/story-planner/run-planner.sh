@@ -62,6 +62,16 @@ gh issue view "$ISSUE_NUMBER" --repo "$REPO" \
     for d in $ADD_DIRS; do echo "- \$PWD/$d"; done
   fi
   echo
+  if [ -f revisions.md ]; then
+    echo "# Revisions Requested by Prior Rubber-Duck Critique (address these)"
+    echo
+    echo "A prior critique of an earlier draft of this plan asked for the changes"
+    echo "below. Revise the plan to address each one, then output the full revised"
+    echo "plan (not a diff)."
+    echo
+    cat revisions.md
+    echo
+  fi
   echo "Output ONLY the implementation plan markdown to stdout — no preamble,"
   echo "no session chatter — because stdout will be posted verbatim as the issue"
   echo "comment. Use a checkbox task list, one block per task, with acceptance"

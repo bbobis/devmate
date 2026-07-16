@@ -120,6 +120,7 @@ runs:
         path: |
           planner-prompt.md
           plan.md
+          revisions.md
           critique-prompt.md
           critique.md
           verdict.txt

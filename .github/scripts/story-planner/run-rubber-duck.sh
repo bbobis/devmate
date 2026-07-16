@@ -75,20 +75,15 @@ while [ "$iteration" -lt "$MAX_REVISIONS" ]; do
     exit 0
   fi
 
-  # REQUEST_REVISION: fold the critique into the plan and re-plan, then re-critique.
-  # Append the critique as a "revise for" section and re-run the planner.
+  # REQUEST_REVISION: append the critique to revisions.md and re-run the
+  # planner so it produces a revised plan, then critique again next iteration.
   {
-    cat plan.md
-    echo
-    echo "## Revisions requested (iteration $iteration)"
+    echo "## Iteration $iteration critique"
     echo
     cat "$CRITIQUE_OUT"
-  } > plan-with-revisions.md
-  mv plan-with-revisions.md plan.md
-  # Re-run planner with the revised plan folded in (planner reads plan.md? no —
-  # planner reads the issue). Instead, feed critique back by re-running planner
-  # is out of scope here; we simply loop the critique against the revised plan
-  # text above. For a full re-plan, the caller can re-invoke run-planner.sh.
+    echo
+  } >> revisions.md
+  bash "$(dirname "$0")/run-planner.sh"
 done
 
 # Two-revision limit reached: fold remaining open items and APPROVE_PLAN
