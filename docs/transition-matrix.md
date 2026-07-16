@@ -51,10 +51,12 @@ the systematic net underneath them (issue #9).
   `lane-set`) are listed in `EXCLUDED_ROWS` with reasons and asserted
   non-empty by the suite.
 
-## Findings the matrix pins deliberately
+## Findings the matrix surfaced
 
-- `approve pr` at `parked` advances to `pr-ready` on every lane: the resume
-  fan-out makes `pr-ready` a flattened successor of `parked`, and the
-  human-gate path checks the flattened (lane-agnostic) projection. The matrix
-  pins this table-backed behavior; tightening it is a product decision, not a
-  test fix.
+- `approve pr` at `parked` used to advance straight to `pr-ready` on every
+  lane: the resume fan-out makes every parkable gate a flattened successor of
+  `parked`, and the human-gate path checks the flattened (lane-agnostic)
+  projection. The matrix pinned that table-backed behavior when it was first
+  merged; it was then tightened (#20) — a parked task now refuses approval
+  phrases outright (resume first), and the matrix's golden cells pin the
+  refusal instead.

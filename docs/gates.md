@@ -187,6 +187,10 @@ the same task — the taskId and all completed work are preserved, never reset.
 - `resume` returns to the exact gate recorded in the pointer and re-checks that
   gate's own precondition on entry. A resume that enters a human-approval gate still
   requires the actor + evidence audit pair (see above).
+- `resume` and `abandon` are the ONLY moves out of `parked`: a human approval
+  phrase typed at a parked task is refused with a resume-first message — it
+  never rides the resume fan-out straight to `spec-approved`/`pr-ready`,
+  which would skip the recorded gate's own precondition re-check.
 - `abandon` is issued only after the explicit confirmation required by the gate
   conversation protocol (see [workflow.md](./workflow.md)).
 
