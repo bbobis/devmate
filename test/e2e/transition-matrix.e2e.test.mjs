@@ -637,8 +637,12 @@ function gitRuntimeDiff(range) {
  */
 function runtimeDiff() {
   const working = gitRuntimeDiff(['HEAD']);
+  // Ref-shaped values only (static pattern, per the repo's command-validation
+  // posture): a leading `-` would reach git as an OPTION, not a revision —
+  // e.g. --output=<path> writes a file and silently yields no selection.
   const base = process.env.DEVMATE_MATRIX_BASE ?? '';
-  const merged = base === '' ? '' : gitRuntimeDiff([`${base}...HEAD`]);
+  const refShaped = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(base) && !base.includes('..');
+  const merged = refShaped ? gitRuntimeDiff([`${base}...HEAD`]) : '';
   return `${working}\n${merged}`.trim();
 }
 
