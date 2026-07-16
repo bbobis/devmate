@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadHookManifest, extractScriptPath } from '../../lib/hooks/registry.mjs';
 import { getOwn } from '../../lib/object-utils.mjs';
+import { readJsonlSync } from '../../lib/json-io.mjs';
 import { TRANSITIONS, STEERING, legalTransitions } from '../../lib/gate-transitions.mjs';
 
 /** @typedef {import('../../lib/types.mjs').TaskState} TaskState */
@@ -370,6 +371,13 @@ export function isUserStuck(state, opts = {}) {
  * uses when the host index has no entry). The `agentName` argument is the
  * default; a matching key inside `returnBody` overrides it.
  *
+ * The prose deliberately carries a literal `{}` BEFORE the JSON: a real agent
+ * reply narrates and quotes code ("the guard returns `{}` for anonymous
+ * callers"), so a brace-span parser that took first-`{`-to-last-`}` would swallow
+ * the empty braces and the contract together and parse nothing (#105). Baking the
+ * hardening in here means every scripted return exercises the harder path
+ * `extractEmbeddedJson` must survive, and no suite has to re-invent it.
+ *
  * @param {string} agentName            Agent whose return this simulates (e.g. 'router').
  * @param {unknown} returnBody          The agent's contract object (its typed return).
  * @param {{ toolUseId?: string }} [opts]
@@ -393,10 +401,48 @@ export function subagentReturnPayload(agentName, returnBody, opts = {}) {
     transcript_path: '.devmate/state/transcript.jsonl',
     tool_name: 'runSubagent',
     tool_input: '...',
-    tool_response: `Returning the ${agentName} contract.\n\n${JSON.stringify(embedded)}`,
+    tool_response:
+      `Returning the ${agentName} contract. The {} braces in this prose come before the JSON, ` +
+      `so a brace-span parser cannot cheat.\n\n${JSON.stringify(embedded)}`,
     tool_use_id: toolUseId,
     cwd: HOST_CWD_REL,
   };
+}
+
+/**
+ * The full SubagentStart → PostToolUse(return) → SubagentStop trio a real
+ * dispatch emits, built from the canonical fixture-shaped payload
+ * ({@link subagentReturnPayload}). The return's `tool_use_id` is derived from
+ * `agentId` with the host's `__vscode` suffix, so it links back to its start the
+ * way `resolveAgentName` joins them; `agentType` is both the SubagentStart
+ * `agent_type` (the host identity channel) and the embedded `agentName`.
+ *
+ * This is the one place the trio is defined: journey suites replay it rather than
+ * re-authoring the wire shape, so a change to the captured fixture updates every
+ * suite through this single builder.
+ *
+ * @param {string} agentId              Host `agent_id` for the SubagentStart/Stop pair.
+ * @param {string} agentType            Agent name (SubagentStart `agent_type` + embedded `agentName`).
+ * @param {unknown} returnBody          The agent's typed contract object.
+ * @returns {Record<string, unknown>[]}
+ */
+export function subagentDispatch(agentId, agentType, returnBody) {
+  const toolUseId = `${agentId}__vscode-1783942732395`;
+  return [
+    { hook_event_name: 'SubagentStart', session_id: DEFAULT_SESSION_ID, agent_id: agentId, agent_type: agentType },
+    subagentReturnPayload(agentType, returnBody, { toolUseId }),
+    { hook_event_name: 'SubagentStop', session_id: DEFAULT_SESSION_ID, agent_id: agentId, agent_type: agentType },
+  ];
+}
+
+/**
+ * Read a JSONL trace file into objects, via the canonical reader. Shared so the
+ * journey suites do not each re-wrap {@link readJsonlSync}.
+ * @param {string} filePath
+ * @returns {Record<string, any>[]}
+ */
+export function readTraceEvents(filePath) {
+  return /** @type {Record<string, any>[]} */ (readJsonlSync(filePath));
 }
 
 /**
