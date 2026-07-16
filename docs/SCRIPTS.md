@@ -485,19 +485,20 @@ node scripts/create-handoff.mjs --task-id <id> [--trace-file <path>]
 
 **Category:** Memory
 
-Health-checks the three-stage memory pipeline — task ledgers (`.devmate/memory/tasks/*.jsonl`) → repo ledger (`.devmate/state/repo/repo.jsonl`) → `.devmate/MEMORY.md` — and reports the first stage that looks broken (the `/memory`-style diagnostic). Also runs DN-1 business-domain doctor checks (declared-but-missing `contextFile`, dangling `relatedDomains` id, missing `entryPoints` path, empty `globs`, duplicate domain id) when `.devmate/devmate.config.json` declares a `domains` array — warnings only, reported under `domainWarnings` in the JSON summary and never affecting this command's exit code. Prints a compact JSON summary to stdout and human-readable findings to stderr; writes the full diagnosis (plus `domainWarnings`) to `.devmate/state/memory-doctor-result.json` for `read_file` access. Pure read — never mutates.
+Health-checks the three-stage memory pipeline — task ledgers (`.devmate/memory/tasks/*.jsonl`) → repo ledger (`.devmate/state/repo/repo.jsonl`) → `.devmate/MEMORY.md` — and reports the first stage that looks broken (the `/memory`-style diagnostic). Also runs a **gate-evidence consistency** stage (`lib/gate-consistency.mjs`): it proves the persisted `workflowGate` is backed by the artifacts and audit events it legally requires, and classifies any divergence (gate ahead of evidence, gate behind the trace, a human-audit gate reached with no audited transition, or a corrupt trace) under `gateConsistency` in the JSON summary. A divergence left unreconciled makes this command exit 1 and prints the recovery command on stderr. Also runs DN-1 business-domain doctor checks (declared-but-missing `contextFile`, dangling `relatedDomains` id, missing `entryPoints` path, empty `globs`, duplicate domain id) when `.devmate/devmate.config.json` declares a `domains` array — warnings only, reported under `domainWarnings` in the JSON summary and never affecting this command's exit code. Prints a compact JSON summary to stdout and human-readable findings to stderr; writes the full diagnosis (plus `domainWarnings`, `gateConsistency`, `gateFixed`) to `.devmate/state/memory-doctor-result.json` for `read_file` access. The memory and domain stages never mutate; the gate stage only mutates under the opt-in `--fix` flag.
 
 **Usage:**
 ```
-node scripts/devmate-doctor.mjs [--root <dir>]
+node scripts/devmate-doctor.mjs [--root <dir>] [--fix]
 ```
 
 **Flags:**
 - `--root <dir>` — repo root (default: cwd)
+- `--fix` — reconcile a desynced `workflowGate` to the last evidence-backed gate under the state lock (the consistency read, the write, and the re-check all run inside the same lock, so a concurrent writer cannot race the reconcile), stamping an audited `gate_transition` that records it and pruning stale artifact-hash trust residue for gates now behind the rollback. A divergence a rollback cannot resolve — a backward tamper whose gate is already evidence-backed, or a corrupt trace — is reported and left in place, not papered over with a no-op write; the command still exits 1 and `gateFixed` stays `false` unless the post-fix re-check is actually clean. Off by default; detection alone is always non-destructive.
 
 **Exit codes:**
-- `0` — pipeline looks healthy (domain warnings, if any, do not affect this)
-- `1` — a stage looks broken (see `firstBrokenStage` in the output)
+- `0` — pipeline looks healthy and the gate is evidence-backed (or was reconciled by `--fix`); domain warnings, if any, do not affect this
+- `1` — a memory stage looks broken (see `firstBrokenStage`) or the gate is desynced and left unreconciled (see `gateConsistency` in the output)
 
 ---
 

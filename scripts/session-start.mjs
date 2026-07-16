@@ -20,6 +20,7 @@ import { bootstrapTaskState } from '../lib/workflow/bootstrap-task-state.mjs';
 import { writeResult } from '../lib/output/write-result.mjs';
 import { readTaskState, writeTaskState, STATE_PATH } from '../lib/task-state.mjs';
 import { buildStateAnchor } from '../lib/orchestrator/state-anchor.mjs';
+import { checkGateConsistency } from '../lib/gate-consistency.mjs';
 import { readTrace } from '../lib/trace/read-trace.mjs';
 import { appendTraceEvent } from '../lib/trace/append.mjs';
 import { completedAcNumbers, summarizeImplProgress } from '../lib/spec-progress.mjs';
@@ -498,9 +499,19 @@ async function emitStateAnchorBlock(repoRoot, stdout, stderr) {
     const result = readTaskState(resolve(repoRoot, STATE_PATH));
     if (!result.ok) return;
     const state = result.state;
-    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness }} */
+    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness, consistency?: import('../lib/gate-consistency.mjs').GateConsistencyResult }} */
     const anchorOpts = {};
     anchorOpts.staleness = computeTaskStaleness(repoRoot, state.workflowGate);
+    // Gate-evidence consistency: a hand-edited task.json, a forged approval, or
+    // a state/trace divergence surfaces as a one-line `state: desynced` field so
+    // the model re-anchors to the last evidence-backed gate. Best-effort — a
+    // failure here must never block the anchor from being emitted.
+    try {
+      const consistency = await checkGateConsistency(state, { root: repoRoot });
+      if (!consistency.ok) anchorOpts.consistency = consistency;
+    } catch (/** @type {unknown} */ err) {
+      stderr.write(`[session-start] gate consistency skipped (non-fatal): ${errMsg(err)}\n`);
+    }
     // During implementation, join the trace with the persisted AC list so the
     // anchor shows which acceptance criteria remain, not just the gate.
     if (state.workflowGate === 'impl-started') {

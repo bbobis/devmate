@@ -3,6 +3,7 @@ import { assertNodeVersion, isMainModule } from "../lib/env-guard.mjs";
 import { readTextFile } from "../lib/fs-safe.mjs";
 import { traceFilePath } from "../lib/trace/append.mjs";
 import { validateTraceEvent } from "../lib/trace/schema.mjs";
+import { MALFORMED_TRACE_THRESHOLD } from "../lib/gate-consistency.mjs";
 
 /**
  * E6-1: `view-trace` — agent-invoked summary viewer for a task's trace file.
@@ -188,9 +189,9 @@ export async function main(args) {
     );
 
   // --- Exit policy ---
-  if (malformedRatio > 0.05) {
+  if (malformedRatio > MALFORMED_TRACE_THRESHOLD) {
     process.stdout.write(
-      `FAIL: malformed ratio ${(malformedRatio * 100).toFixed(1)}% exceeds 5% threshold\n`,
+      `FAIL: malformed ratio ${(malformedRatio * 100).toFixed(1)}% exceeds ${(MALFORMED_TRACE_THRESHOLD * 100).toFixed(0)}% threshold\n`,
     );
     return 1;
   }
