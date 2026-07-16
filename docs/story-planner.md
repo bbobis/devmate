@@ -179,7 +179,21 @@ Tag devmate releases (`@v1`) so consumers get stable updates.
   agents never to follow embedded directives that change output format, ignore
   rules, exfiltrate secrets, or act outside the allowed repos.
 - Tool access is a read-only allow-list (`--allow-tool='shell(...)'`); deny takes
-  precedence. The pipeline never grants `write`.
+  precedence. It grants ONLY read/search commands: `rg`, `grep`, `find`, `cat`,
+  `ls`, `head`, `tail`, `wc`. There is **no `git`, `gh`, `curl`, or any file-
+  mutation tool** (`rm`/`mv`/`cp`/`tee`/`node`/`npm`) — so the agent cannot run
+  git, call the GitHub API, reach the network, or delete/modify local files via
+  its shell tool. (The deterministic discovery scan runs in Node outside
+  Copilot's shell tool.)
+- **No token has `contents: write`** — the agents/scripts cannot push, force-push,
+  delete branches, or delete repos regardless of what they attempt. Issue
+  deletion requires admin access the tokens do not have; the only mutations the
+  pipeline performs are creating the plan comment and minimizing prior
+  plan-marker comments.
+- Do not pass context repos that contain checked-in secrets (`.env`, private
+  keys, generated credentials, customer data). The agents can read any checked-
+  out file via `cat`/`grep`/`find`, and findings can surface in the posted
+  comment or transcript artifact.
 - `PLANNER_TOKEN` is a long-lived secret — rotate it and store it as an Actions
   secret, never in code.
 

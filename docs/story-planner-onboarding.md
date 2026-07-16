@@ -88,6 +88,9 @@ the code.
 - Your org must permit the `copilot-requests: write` permission and Copilot CLI
   access. If Copilot CLI is not enabled for your org, the action cannot run the
   agents.
+- **Do not pass context repos containing checked-in secrets** (`.env`, private
+  keys, credentials). The agents can read any checked-out file; see Security
+  notes.
 
 ## Step 1 — Create (or confirm) the `ready-for-dev` label
 
@@ -275,7 +278,18 @@ For a clean internal rollout, assign one owning team responsibility for:
 - Issue bodies and related-issues context are **untrusted**. The prompts instruct
   the agents never to follow embedded directives that change output format,
   exfiltrate secrets, or act outside the allowed repos.
-- Tool access is a read-only allow-list; the pipeline never grants `write`.
+- Tool access is a read-only allow-list: `rg`, `grep`, `find`, `cat`, `ls`,
+  `head`, `tail`, `wc` only. There is **no `git`, `gh`, `curl`, or any file-
+  mutation tool** — the agent cannot run git, call the GitHub API, reach the
+  network, or delete/modify files via its shell tool.
+- No token has `contents: write`, so the pipeline cannot push, force-push,
+  delete branches, or delete repos. Issue deletion needs admin access the tokens
+  lack; the only mutations are creating the plan comment and minimizing prior
+  plan-marker comments.
+- **Do not pass context repos that contain checked-in secrets** (`.env`, private
+  keys, generated credentials, customer data). The agents can read any checked-
+  out file via `cat`/`grep`/`find`, and findings can end up in the posted comment
+  or the uploaded transcript artifact.
 - `PLANNER_TOKEN` is a long-lived secret — store it as an Actions secret, never
   in code, and rotate it.
 

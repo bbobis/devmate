@@ -20,9 +20,12 @@ set -euo pipefail
 export STORY_PLAN_MARKER='<!-- devmate-story-plan-v1 -->'
 
 # Read-only tool allow-list shared across planner + rubber-duck runs.
+# Intentionally NO git / gh / curl / rm / mv / cp / tee / node / npm. The
+# story-planner agents only need read/search commands; the deterministic
+# discovery scan runs in Node OUTSIDE Copilot's shell tool. Remote writes are
+# additionally blocked by token scopes (no contents:write on any token).
 copilot_allow_tools() {
   printf '%s\n' \
-    "--allow-tool=shell(git:*)" \
     "--allow-tool=shell(rg:*)" \
     "--allow-tool=shell(grep:*)" \
     "--allow-tool=shell(find:*)" \
