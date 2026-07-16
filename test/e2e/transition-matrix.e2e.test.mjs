@@ -605,14 +605,14 @@ function assertCell(cell, expected, run) {
 }
 
 /**
- * The changed-cells heuristic input: the working diff of the RUNTIME dirs
- * only (lib/, hooks/, scripts/), so editing the matrix itself never
- * re-selects the whole space. Best-effort — no git, no selection.
- * @returns {string}
+ * One best-effort `git diff` over the RUNTIME dirs only (lib/, hooks/,
+ * scripts/), so editing the matrix itself never re-selects the whole space.
+ * @param {string[]} range  Range args, e.g. ['HEAD'] or ['origin/main...HEAD'].
+ * @returns {string}  Empty on any git failure — no git, no selection.
  */
-function runtimeDiff() {
+function gitRuntimeDiff(range) {
   try {
-    const r = spawnSync('git', ['diff', 'HEAD', '--', 'lib', 'hooks', 'scripts'], {
+    const r = spawnSync('git', ['diff', ...range, '--', 'lib', 'hooks', 'scripts'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       timeout: 10000,
@@ -621,6 +621,25 @@ function runtimeDiff() {
   } catch {
     return '';
   }
+}
+
+/**
+ * The changed-cells heuristic input (#23). Two sources, unioned:
+ *  - the WORKING diff against HEAD — a local run with uncommitted runtime
+ *    edits re-runs the cells those edits touch;
+ *  - when `DEVMATE_MATRIX_BASE` names a ref (e.g. origin/main), the
+ *    merge-base diff `<base>...HEAD` — so a clean CI checkout of a branch
+ *    still selects the cells its COMMITTED runtime changes touch. Opt-in by
+ *    design: unset keeps default runs golden-only-fast, so nobody's npm test
+ *    slows down because a long-lived branch accumulated runtime diffs.
+ * Best-effort in both halves — a missing ref or no git yields no selection.
+ * @returns {string}
+ */
+function runtimeDiff() {
+  const working = gitRuntimeDiff(['HEAD']);
+  const base = process.env.DEVMATE_MATRIX_BASE ?? '';
+  const merged = base === '' ? '' : gitRuntimeDiff([`${base}...HEAD`]);
+  return `${working}\n${merged}`.trim();
 }
 
 // ---------------------------------------------------------------------------
