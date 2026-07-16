@@ -633,10 +633,24 @@ function defineCompactionSuite(tc) {
       }
 
       const dir = stateArtifact(ws, 'compaction');
-      const jsonFiles = readdirSync(dir).filter((f) => f.endsWith('.json'));
+      // Deterministic pick: artifact filenames embed a millisecond stamp, so
+      // the lexically-last name is the newest — readdirSync order is
+      // filesystem order and would bind to a stale artifact if this dir ever
+      // held more than one (e.g. a budget-triggered auto-compaction).
+      const jsonFiles = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
       assert.ok(jsonFiles.length > 0, 'no compaction artifact was written');
-      const artifact = JSON.parse(readFileSync(join(dir, jsonFiles[0]), 'utf8'));
+      const artifact = JSON.parse(readFileSync(join(dir, jsonFiles[jsonFiles.length - 1]), 'utf8'));
       assert.equal(artifact.taskId, taskId, 'the artifact belongs to a different task');
+
+      if (tc.gate === 'impl-started') {
+        // #22: the artifact must read the CANONICAL per-task trace — with AC1
+        // completed, nextAction derives from that step, never the generic
+        // "check nextAction field" fallback that pointed at itself.
+        assert.ok(
+          artifact.nextAction.startsWith('Continue after completed step:'),
+          `nextAction is not trace-derived: ${artifact.nextAction}`,
+        );
+      }
 
       assert.equal(readState(ws.root).workflowGate, tc.gate, 'compaction moved the gate');
     });

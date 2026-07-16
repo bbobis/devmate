@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCompactionArtifact,
+  compactAndReclaim,
   writeCompactionArtifact,
   loadCompactionArtifact,
   canResumeFromCompaction,
@@ -166,4 +167,43 @@ test('resume-from-compaction-only / load written artifact and resume with no tra
   const r = canResumeFromCompaction(/** @type {import('../../../lib/types.mjs').CompactionArtifact} */ (loaded));
   assert.equal(r.ok, true);
   assert.equal(/** @type {import('../../../lib/types.mjs').CompactionArtifact} */ (loaded).goal, 'ship v0.3.0');
+});
+
+test('compactAndReclaim / reads the CANONICAL per-task trace, so nextAction is trace-derived (#22)', async () => {
+  // The production layout: task.json at <root>/.devmate/state/task.json and
+  // the trace at <root>/.devmate/state/trace/<taskId>.jsonl. compactAndReclaim
+  // used to build the artifact with no trace location, so the builder fell
+  // back to a flat trace.jsonl the runtime never writes and every production
+  // artifact's nextAction was the generic fallback.
+  const root = await fsp.mkdtemp(join(tmpdir(), 'compaction-reclaim-'));
+  const stateDir = join(root, '.devmate', 'state');
+  const traceDir = join(stateDir, 'trace');
+  await fsp.mkdir(traceDir, { recursive: true });
+  const taskStatePath = join(stateDir, 'task.json');
+  await fsp.writeFile(taskStatePath, JSON.stringify({ taskId: 't-22' }), 'utf8');
+  await fsp.writeFile(
+    join(traceDir, 't-22.jsonl'),
+    `${JSON.stringify({
+      type: 'step_complete',
+      stepId: 'impl-AC1',
+      taskId: 't-22',
+      ts: '2026-01-01T00:00:00.000Z',
+      schemaVersion: 1,
+      label: 'a body over the configured cap is rejected with a 413.',
+    })}\n`,
+    'utf8',
+  );
+
+  const { jsonPath } = await compactAndReclaim({
+    taskStatePath,
+    outputDir: join(stateDir, 'compaction'),
+  });
+
+  const artifact = JSON.parse(await fsp.readFile(jsonPath, 'utf8'));
+  assert.equal(artifact.taskId, 't-22');
+  assert.equal(
+    artifact.nextAction,
+    'Continue after completed step: a body over the configured cap is rejected with a 413.',
+    'nextAction must derive from the per-task trace, not the fallback',
+  );
 });
