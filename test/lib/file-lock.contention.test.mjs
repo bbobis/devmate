@@ -49,36 +49,55 @@ function tick() {
   return new Promise((resolve) => setTimeout(resolve, 1));
 }
 
+/**
+ * One read-modify-write increment under the file lock — the real consumers'
+ * pattern (lib/task-state.mjs writeTaskState): read the current file, derive
+ * the next state, write it back. Holding across an event-loop turn makes
+ * every other writer genuinely wait on the lock, not merely run later.
+ * @param {string} dataPath
+ * @param {string} lockPath
+ * @param {string} [pad]  Optional payload to widen the torn-write window.
+ * @returns {Promise<import('../../lib/types.mjs').LockResult>}
+ */
+function incrementUnderLock(dataPath, lockPath, pad) {
+  return withFileLock(
+    lockPath,
+    async () => {
+      const current = JSON.parse(readFileSync(dataPath, 'utf8'));
+      await tick();
+      writeFileSync(
+        dataPath,
+        JSON.stringify({ counter: current.counter + 1, ...(pad === undefined ? {} : { pad }) }),
+        'utf8',
+      );
+    },
+    { retryIntervalMs: 2 },
+  );
+}
+
+/**
+ * Read the contended file once and assert it parses to a whole state.
+ * @param {string} dataPath
+ * @returns {Promise<void>}
+ */
+async function observeWholeState(dataPath) {
+  const parsed = JSON.parse(readFileSync(dataPath, 'utf8')); // throws on a torn file
+  assert.equal(typeof parsed.counter, 'number', 'observed a half-applied state');
+  await tick();
+}
+
 test('withFileLock › N overlapping read-modify-write writers lose no update', async () => {
-  // The real consumers' pattern (lib/task-state.mjs writeTaskState): the
-  // critical section reads the current file, derives the next state, writes
-  // it back. Without mutual exclusion, two writers read the same counter and
-  // one increment vanishes — the classic lost update. N=8 overlapping
-  // writers must land ALL N increments.
+  // Without mutual exclusion, two writers read the same counter and one
+  // increment vanishes — the classic lost update. N=8 overlapping writers
+  // must land ALL N increments (a no-op lock lands exactly 1 — verified).
   const dir = makeTmpDir();
   const dataPath = join(dir, 'state.json');
   const lockPath = dataPath + LOCK_SUFFIX;
   writeFileSync(dataPath, JSON.stringify({ counter: 0 }), 'utf8');
 
-  /** @type {Promise<import('../../lib/types.mjs').LockResult>[]} */
-  // @bounded-alloc — one entry per writer (WRITERS = 8).
-  const writers = [];
-  for (let i = 0; i < WRITERS; i++) {
-    writers.push(
-      withFileLock(
-        lockPath,
-        async () => {
-          const current = JSON.parse(readFileSync(dataPath, 'utf8'));
-          // Hold the lock across an event-loop turn so every other writer is
-          // genuinely waiting on the lock, not merely scheduled later.
-          await tick();
-          writeFileSync(dataPath, JSON.stringify({ counter: current.counter + 1 }), 'utf8');
-        },
-        { retryIntervalMs: 2 },
-      ),
-    );
-  }
-  const results = await Promise.all(writers);
+  const results = await Promise.all(
+    Array.from({ length: WRITERS }, () => incrementUnderLock(dataPath, lockPath)),
+  );
 
   for (const r of results) {
     assert.equal(r.acquired, true, `a writer failed to acquire: ${'error' in r ? r.error : ''}`);
@@ -91,49 +110,28 @@ test('withFileLock › a concurrent reader never observes a torn or half-applied
   const dir = makeTmpDir();
   const dataPath = join(dir, 'state.json');
   const lockPath = dataPath + LOCK_SUFFIX;
-  writeFileSync(dataPath, JSON.stringify({ counter: 0, pad: 'x'.repeat(512) }), 'utf8');
+  const pad = 'x'.repeat(512);
+  writeFileSync(dataPath, JSON.stringify({ counter: 0, pad }), 'utf8');
 
   let writersDone = false;
-  /** @type {Promise<unknown>[]} */
-  // @bounded-alloc — WRITERS lock writers plus one polling reader.
-  const work = [];
-  for (let i = 0; i < WRITERS; i++) {
-    work.push(
-      withFileLock(
-        lockPath,
-        async () => {
-          const current = JSON.parse(readFileSync(dataPath, 'utf8'));
-          await tick();
-          writeFileSync(
-            dataPath,
-            JSON.stringify({ counter: current.counter + 1, pad: 'x'.repeat(512) }),
-            'utf8',
-          );
-        },
-        { retryIntervalMs: 2 },
-      ),
-    );
-  }
+  const writers = Promise.all(
+    Array.from({ length: WRITERS }, () => incrementUnderLock(dataPath, lockPath, pad)),
+  ).then(() => {
+    writersDone = true;
+  });
 
   // The reader polls the whole time the writers contend: every observed
   // state must parse and carry the invariant shape.
-  work.push(
-    (async () => {
-      let observations = 0;
-      while (!writersDone) {
-        const parsed = JSON.parse(readFileSync(dataPath, 'utf8')); // throws on a torn file
-        assert.equal(typeof parsed.counter, 'number', 'observed a half-applied state');
-        observations += 1;
-        await tick();
-      }
-      assert.ok(observations > 0, 'the reader never actually observed anything');
-    })(),
-  );
+  const reader = (async () => {
+    let observations = 0;
+    while (!writersDone) {
+      await observeWholeState(dataPath);
+      observations += 1;
+    }
+    assert.ok(observations > 0, 'the reader never actually observed anything');
+  })();
 
-  await Promise.all(work.slice(0, WRITERS)).then(() => {
-    writersDone = true;
-  });
-  await Promise.all(work);
+  await Promise.all([writers, reader]);
 
   assert.equal(JSON.parse(readFileSync(dataPath, 'utf8')).counter, WRITERS);
 });
@@ -150,7 +148,7 @@ test('withFileLock › a waiter runs strictly after the holder releases, never i
     async () => {
       order.push('holder-enter');
       // Hold across several event-loop turns while the waiter retries.
-      for (let i = 0; i < 5; i++) await tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
       order.push('holder-exit');
     },
     { retryIntervalMs: 2 },
@@ -184,29 +182,36 @@ test('withAppendLock › overlapping read-count-then-append cycles stay FIFO and
   const filePath = join(dir, 'trace.jsonl');
   writeFileSync(filePath, '', 'utf8');
 
-  /** @type {Promise<unknown>[]} */
-  // @bounded-alloc — one entry per appender (WRITERS = 8).
-  const appenders = [];
-  for (let i = 0; i < WRITERS; i++) {
-    appenders.push(
-      withAppendLock(filePath, async () => {
-        const lines = readFileSync(filePath, 'utf8').split('\n').filter((l) => l !== '');
-        await tick(); // widen the read-append window
-        writeFileSync(filePath, `${readFileSync(filePath, 'utf8')}${JSON.stringify({ line: lines.length + 1, writer: i })}\n`, 'utf8');
-      }),
-    );
-  }
-  await Promise.all(appenders);
+  /**
+   * One read-count-then-append cycle through the serializer.
+   * @param {number} writer
+   */
+  const appendOnce = (writer) =>
+    withAppendLock(filePath, async () => {
+      const lines = readFileSync(filePath, 'utf8').split('\n').filter((l) => l !== '');
+      await tick(); // widen the read-append window
+      writeFileSync(
+        filePath,
+        `${readFileSync(filePath, 'utf8')}${JSON.stringify({ line: lines.length + 1, writer })}\n`,
+        'utf8',
+      );
+    });
+  await Promise.all(Array.from({ length: WRITERS }, (_, i) => appendOnce(i)));
 
   const lines = readFileSync(filePath, 'utf8').split('\n').filter((l) => l !== '');
   assert.equal(lines.length, WRITERS, `interleaved appends lost lines: ${lines.length}/${WRITERS}`);
-  lines.forEach((line, idx) => {
-    const parsed = JSON.parse(line); // throws on an interleaved partial line
+  /** @type {{ line: number, writer: number }[]} */
+  // @bounded-alloc — one parsed entry per appended line (WRITERS = 8).
+  const parsedLines = [];
+  for (const line of lines) {
+    parsedLines.push(JSON.parse(line)); // throws on an interleaved partial line
+  }
+  parsedLines.forEach((parsed, idx) => {
     assert.equal(parsed.line, idx + 1, `line numbering shows a lost or duplicated count at index ${idx}`);
   });
   // FIFO: writers were queued 0..N-1 and must have appended in that order.
   assert.deepEqual(
-    lines.map((l) => JSON.parse(l).writer),
+    parsedLines.map((p) => p.writer),
     Array.from({ length: WRITERS }, (_, i) => i),
     'withAppendLock did not serialize appenders first-in first-out',
   );
@@ -219,27 +224,25 @@ test('appendTraceEvent › N overlapping appends yield exactly N intact, correct
   const root = makeTmpDir();
   const taskId = 'contention-task';
 
-  /** @type {Promise<{ ok: boolean, lineNumber?: number, errors?: string[] }>[]} */
-  // @bounded-alloc — one entry per appender (WRITERS = 8).
-  const appends = [];
-  for (let i = 0; i < WRITERS; i++) {
-    appends.push(
-      appendTraceEvent(
-        {
-          type: 'action',
-          actionType: 'write',
-          path: `src/file-${i}.mjs`,
-          digest: `sha256:${String(i).repeat(4)}`,
-          stepId: `step-${i}`,
-          taskId,
-          ts: '2026-01-01T00:00:00.000Z',
-          schemaVersion: 1,
-        },
-        { root },
-      ),
+  /**
+   * One production append for writer `i`.
+   * @param {number} i
+   */
+  const traceAppend = (i) =>
+    appendTraceEvent(
+      {
+        type: 'action',
+        actionType: 'write',
+        path: `src/file-${i}.mjs`,
+        digest: `sha256:${String(i).repeat(4)}`,
+        stepId: `step-${i}`,
+        taskId,
+        ts: '2026-01-01T00:00:00.000Z',
+        schemaVersion: 1,
+      },
+      { root },
     );
-  }
-  const results = await Promise.all(appends);
+  const results = await Promise.all(Array.from({ length: WRITERS }, (_, i) => traceAppend(i)));
 
   for (const r of results) {
     assert.equal(r.ok, true, `an append failed under contention: ${(r.errors ?? []).join('; ')}`);
