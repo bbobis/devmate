@@ -55,6 +55,7 @@ import { advanceHumanGate } from "../lib/gatectl.mjs";
 import { continueApprovedFeature } from "../lib/workflow/lanes/feature.mjs";
 import { transitionGate } from "../lib/gate-transitions.mjs";
 import { buildStateAnchor } from "../lib/orchestrator/state-anchor.mjs";
+import { checkGateConsistency } from "../lib/gate-consistency.mjs";
 import {
   loadDevmateConfig,
   resolveStaleTaskHours,
@@ -661,8 +662,18 @@ export async function emitStateAnchor(root, stream = process.stdout) {
     const result = readTaskState(statePath);
     if (!result.ok) return;
     const state = result.state;
-    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness }} */
+    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness, consistency?: import('../lib/gate-consistency.mjs').GateConsistencyResult }} */
     const anchorOpts = {};
+    // Gate-evidence consistency: a hand-edited task.json, a forged approval, or
+    // a state/trace divergence surfaces as a one-line `state: desynced` field so
+    // the model re-anchors to the last evidence-backed gate. Best-effort — a
+    // failure here must never block the anchor or the prompt.
+    try {
+      const consistency = await checkGateConsistency(state, { root });
+      if (!consistency.ok) anchorOpts.consistency = consistency;
+    } catch {
+      // Non-fatal — the anchor is still emitted without the desync line.
+    }
     // Surface staleness (from the gitignored state file's mtime) so a days-old
     // in-flight task auto-parks for an unrelated new request instead of forcing
     // a park/abandon interrogation. Best-effort: any failure just omits it.
