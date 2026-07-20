@@ -18,6 +18,13 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-cv-taskid');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(__dirname, '..', '..', 'hooks', 'contract-validator.mjs');
 
@@ -41,6 +48,7 @@ function runWithClaimedTaskId(claimedTaskId) {
   const r = spawnSync('node', [HOOK], {
     input: JSON.stringify({
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
       tool_name: 'create_file',
       // #77: VS Code names the write target `tool_input.filePath`. This test used
       // a top-level `path` — the very key that made the validator a no-op — so it

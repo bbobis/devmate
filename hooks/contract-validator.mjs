@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { assertNodeVersion, isMainModule } from '../lib/env-guard.mjs';
 import { resolveHookRoot } from '../lib/init/repo-root.mjs';
+import { isDevmatePayload } from '../lib/hooks/session-marker.mjs';
 import { readTaskState } from '../lib/task-state.mjs';
 import { TASK_ID_RE } from '../lib/memory/paths.mjs';
 import { assertWithinRoot, readTextFile } from '../lib/fs-safe.mjs';
@@ -330,6 +331,11 @@ export async function runWithIO(stdin, _stdout, stderr) {
   } catch {
     return 0;
   }
+
+  // Runtime scope: plugin-level hooks fire in EVERY Copilot session. Act only
+  // inside a marked devmate session (lib/hooks/session-marker.mjs); otherwise
+  // exit silently — no artifact validation, no blocking, no writes.
+  if (!isDevmatePayload(payload)) return 0;
 
   try {
     const artifactPath = extractPath(payload);

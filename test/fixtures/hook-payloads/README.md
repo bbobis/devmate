@@ -28,9 +28,14 @@ files are what tells you.
 
 ## Capturing a real payload (five minutes, and worth it)
 
-1. In VS Code, open **Output** → the **GitHub Copilot Chat** channel (the agent
-   log). Hook invocations appear as
+1. In VS Code, open **Output** → the **GitHub Copilot Chat Hooks** channel (a
+   dedicated hooks log; older builds folded this into the **GitHub Copilot
+   Chat** channel). Hook invocations appear as
    `[#905] [PreToolUse] Input: {...}` followed by `Output: {...}`.
+   **Caution (verified 2026-07-17):** this channel elides `tool_input` to the
+   literal `"..."` on `PreToolUse`/`PostToolUse` lines — do not capture those
+   two events from it and treat `"tool_input": "..."` as the real payload; the
+   envelope fields (ids, cwd, transcript_path, timestamp) are faithful.
 2. Run a session in a devmate-initialized workspace and trigger the event you
    want — an edit for `PreToolUse`/`PostToolUse`, a subagent dispatch for
    `SubagentStart`, and so on.

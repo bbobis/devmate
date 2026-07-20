@@ -39,6 +39,13 @@ Read the task description provided. Return a single JSON object (no markdown, no
 - **standard**: 2–8 hours (most features and bugs, routine chores)
 - **large**: Over 8 hours (complex features, multi-component refactors, major system overhaul)
 
+Downstream, `budgetClass` also feeds an advisory **cost tier** (E16-6): at
+dispatch, `route-model` derives a `cheap`/`powerful` tier from the class (a
+`large` class → `powerful`) and records it on the model-route hint. Your job is
+only to classify the class accurately; the tier is computed for you and is
+advisory metadata, never a forced model switch. See
+[docs/model-policy.md](../docs/model-policy.md#cost-tier-cheap-vs-powerful-routing-e16-6).
+
 ## Handling Low Confidence
 
 When you are unsure (confidence < 0.75):

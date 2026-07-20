@@ -53,6 +53,22 @@ Workflow gates track numbered pipeline progress for a task. They are stored in `
 
 > **Note:** The `chore` lane does not require a `pr-ready` gate — it transitions directly from `verification-passed` to `done` via `complete`.
 
+### The (lane, gate) pair is validated at the read boundary (#129)
+
+`validateTaskState` (`lib/task-state.mjs`) rejects a task state whose
+`workflowGate` has no place in its lane's transition table — every gate the
+lane's `TRANSITIONS` entry mentions as a row or a target is valid, plus the
+lane-agnostic gates (`no-lane`, `done`, `parked`, `abandoned`); anything else
+(e.g. lane `bug` + gate `discovery-done`) fails with an error naming both
+fields and the likely cause: a hand-edited or corrupted `task.json`. The valid
+set is derived from the frozen table at call time, so the validator cannot
+drift from the runtime. `spec-invalidated` is rejected for every lane as a
+*persisted resting gate*: it remains part of the transition graph and the
+`WorkflowGate` type for its recovery semantics (`spec-invalidated → spec-draft`
+in the flattened projection), but no runtime writer ever sets it as a gate
+value (`hooks/spec-integrity-guard.mjs` rolls the gate back to `spec-draft`
+instead), so a persisted state carrying it is hand-edited by definition.
+
 ### Who advances a gate (#91)
 
 **No agent can.** Not the orchestrator, which owns gate state and declares
@@ -63,7 +79,7 @@ hooks, because a hook is the only part of devmate that can actually run code:
 | Mover | Event | What it advances on |
 | --- | --- | --- |
 | `hooks/gate-advance.mjs` (PostToolUse) | the internal chain | **Evidence on disk.** |
-| `hooks/approval-listener.mjs` (UserPromptSubmit) | `approve spec` / `approve plan` / `approve pr` | **An exact human phrase.** |
+| `hooks/approval-listener.mjs` (UserPromptSubmit) | `approve spec` / `approve plan` / `approve pr`; steering: `revise scope: <reason>` / `re-plan: <reason>` (feature lane, #127); recovery: `reset task` (quarantine a corrupt `task.json` and start fresh, #191 — does not move a gate) | **An exact human phrase.** |
 
 Before #91 the internal chain had no mover at all: the pre-implementation spine
 existed only in the lane-agnostic `LINEAR_SPINE`, reachable by no event, so the
@@ -187,6 +203,10 @@ the same task — the taskId and all completed work are preserved, never reset.
 - `resume` returns to the exact gate recorded in the pointer and re-checks that
   gate's own precondition on entry. A resume that enters a human-approval gate still
   requires the actor + evidence audit pair (see above).
+- `resume` and `abandon` are the ONLY moves out of `parked`: a human approval
+  phrase typed at a parked task is refused with a resume-first message — it
+  never rides the resume fan-out straight to `spec-approved`/`pr-ready`,
+  which would skip the recorded gate's own precondition re-check.
 - `abandon` is issued only after the explicit confirmation required by the gate
   conversation protocol (see [workflow.md](./workflow.md)).
 

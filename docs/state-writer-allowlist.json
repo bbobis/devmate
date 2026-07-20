@@ -1,0 +1,15 @@
+{
+  "_comment": "#112 state-writer guard registry. mutateTaskStateUnderLock is the canonical atomic way to change task.json; every direct writeTaskState( caller under lib/, scripts/, hooks/ must be a justified exception listed here. A new unlisted caller fails check-state-writers; an entry that no longer calls writeTaskState is flagged stale so this list shrinks as writers migrate. See docs/state-management.md.",
+  "allowed": {
+    "lib/task-state.mjs": "Defines writeTaskState — the blind-write primitive mutateTaskStateUnderLock and the bootstrap path both build on.",
+    "lib/gatectl.mjs": "advanceHumanGate applies ONE validated human transition and has its own stale-gate precondition (refuses when the on-disk gate is not the expected one) — a guarded transition, not a silent snapshot-merge.",
+    "lib/workflow/backend-ready.mjs": "Applies a computed lane transition to a state passed in by the orchestrator (single-writer), not a read-then-merge.",
+    "lib/workflow/bootstrap-task-state.mjs": "Bootstraps fresh task state — a blind write by design (must be able to write over a missing file). stateVersion seeds at 0 here.",
+    "lib/workflow/bug-handoff.mjs": "Applies a computed lane transition to a passed-in state (single-writer).",
+    "lib/workflow/lanes/chore.mjs": "Applies computed chore-lane transitions to a passed-in state (single-writer).",
+    "lib/workflow/lanes/feature.mjs": "Applies computed feature-lane transitions to a passed-in state (single-writer).",
+    "scripts/gatectl.mjs": "CLI writes a state the caller supplies — an operator tool, not a concurrent hook.",
+    "scripts/init-task-state.mjs": "Bootstraps fresh task state (blind write by design).",
+    "scripts/session-start.mjs": "Bootstraps / reconciles task state at SessionStart (blind write by design)."
+  }
+}

@@ -4,6 +4,22 @@
   "note": "Paths inside a fixture are the capture's own. The conformance suite never edits a fixture on disk; it rebases the fields named in `rebase` onto a temp workspace (relative paths joined with path.join, so the suite is cross-platform).",
   "fixtures": [
     {
+      "file": "captured/sessionstart.new.json",
+      "event": "SessionStart",
+      "provenance": "captured",
+      "source": "VS Code 'GitHub Copilot Chat Hooks' output channel, 2026-07-17, session 852be78c, model auto, single-root devmate repo workspace",
+      "proves": "SessionStart also carries `model` and `transcript_path` (the derived fixture predates both); in a single-root workspace cwd is the workspace folder itself, not a .devmate subfolder",
+      "rebase": { "cwd": "." }
+    },
+    {
+      "file": "captured/userpromptsubmit.prompt.json",
+      "event": "UserPromptSubmit",
+      "provenance": "captured",
+      "source": "VS Code 'GitHub Copilot Chat Hooks' output channel, 2026-07-17, session 852be78c, model auto, single-root devmate repo workspace",
+      "proves": "UserPromptSubmit also carries `transcript_path` (absent from the derived fixture); the prompt arrives verbatim",
+      "rebase": { "cwd": "." }
+    },
+    {
       "file": "captured/pretooluse.read-file.json",
       "event": "PreToolUse",
       "provenance": "captured",

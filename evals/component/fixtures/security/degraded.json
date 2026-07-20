@@ -1,0 +1,8 @@
+{
+  "findings": [
+    { "severity": "critical", "description": "Auth bypass in route guard", "path": "sample/auth-guard.mjs#L42" },
+    { "severity": "low", "description": "Style nit flagged as a security risk", "path": "sample/formatter.mjs#L8" }
+  ],
+  "passed": false,
+  "unverified": []
+}

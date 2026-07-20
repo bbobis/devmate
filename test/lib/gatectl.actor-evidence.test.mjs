@@ -262,3 +262,38 @@ test('hook fast path — exact phrase "approve pr" stamps actor hook-exact-phras
     fx.cleanup();
   }
 });
+
+test('advanceHumanGate — a parked task refuses approval phrases outright (#20): resume is the only way out', async () => {
+  // The flattened table lists every parkable gate as a successor of `parked`
+  // so `resume`'s dynamic target is representable. That fan-out must never
+  // double as an approval edge: with spec.md on disk, parked → spec-approved
+  // and parked → pr-ready would otherwise pass edge legality AND their
+  // preconditions, un-parking the task while skipping resume's re-check of
+  // the recorded gate.
+  const { root, statePath, tracePath, cleanup } = makeFixture({ workflowGate: 'parked' });
+  try {
+    await assert.rejects(
+      advanceHumanGate('parked', 'spec-approved', {
+        actor: 'hook-exact-phrase',
+        evidence: 'approve spec',
+        root,
+      }),
+      /parked.*[Rr]esume/s,
+    );
+    await assert.rejects(
+      advanceHumanGate('parked', 'pr-ready', {
+        actor: 'hook-exact-phrase',
+        evidence: 'approve pr',
+        root,
+      }),
+      /parked.*[Rr]esume/s,
+    );
+
+    // No side effects: the gate stays parked and nothing was traced.
+    const persisted = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert.equal(persisted.workflowGate, 'parked');
+    assert.deepEqual(readTrace(tracePath), []);
+  } finally {
+    cleanup();
+  }
+});

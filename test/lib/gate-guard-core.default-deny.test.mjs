@@ -131,44 +131,6 @@ test('tee (non-append) is classified as an edit', () => {
   assert.equal(isSourceEditTool('run_in_terminal', 'echo x | tee lib/app.mjs'), true);
 });
 
-// #128: the source-edit classifier must not misread a `>` that lives inside a
-// quoted argument as a redirect operator, and `tee` is a write only when its
-// actual target names a source path — not for every capture-to-log. All four
-// cases produced (or must keep producing) the exact denial that strands a user
-// mid-verification with no working escape, since the command was never an edit.
-test('#128 - a `>` inside a quoted arg is not a redirect (git commit)', () => {
-  const command = 'git commit -m "renamed > foo.mjs"';
-  assert.equal(isSourceEditTool('run_in_terminal', command), false);
-  // The real symptom: this must not be denied while verifying.
-  assert.equal(guardAtGate(command, 'verification-passed').decision, 'allow');
-});
-
-test('#128 - a quoted `> path.ext` grep pattern is not a redirect', () => {
-  const command = 'grep "> some/path.mjs" README.md';
-  assert.equal(isSourceEditTool('run_in_terminal', command), false);
-  assert.equal(guardAtGate(command, 'impl-started').decision, 'allow');
-});
-
-test('#128 - tee onto a non-source log is not a source write', () => {
-  const command = 'npm test 2>&1 | tee test-results.log';
-  assert.equal(isSourceEditTool('run_in_terminal', command), false);
-  assert.equal(guardAtGate(command, 'verification-passed').decision, 'allow');
-});
-
-test('#128 - tee onto a real source path is STILL a source write (fail-closed intact)', () => {
-  const command = 'npm test 2>&1 | tee lib/gate-guard-core.mjs';
-  assert.equal(isSourceEditTool('run_in_terminal', command), true);
-  assert.equal(guardAtGate(command, 'verification-passed').decision, 'deny');
-});
-
-// The narrowing must not reopen the deliberate holes: a genuinely unquoted
-// redirect onto a source path or session artifact is still a write.
-test('#128 - an actual unquoted redirect onto source is still caught', () => {
-  assert.equal(isSourceEditTool('run_in_terminal', 'printf "x" > lib/app.mjs'), true);
-  assert.equal(isSourceEditTool('run_in_terminal', 'somecmd >> lib/app.js'), true);
-  assert.equal(isSourceEditTool('run_in_terminal', 'echo "# forged" > .devmate/session/spec.md'), true);
-});
-
 test('allows cat/grep/ls read', () => {
   assert.equal(isSourceEditTool('run_in_terminal', 'cat lib/app.mjs'), false);
   assert.equal(isSourceEditTool('run_in_terminal', 'grep -n "foo" lib/app.mjs'), false);
@@ -259,4 +221,179 @@ test('known read-only and control-plane tools are not edits', () => {
   // gating it would make Rule 2 deny every dispatch before a task exists —
   // deadlocking the orchestrator, since dispatch is how a task starts.
   assert.equal(isSourceEditTool('runSubagent', undefined), false);
+});
+
+// ---- #128: quote-aware tokenization + tee target inspection ----
+
+test('#128: git commit with "> file.mjs" inside a quoted message is NOT a source write', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'git commit -m "renamed > foo.mjs"'),
+    false,
+  );
+  assert.equal(
+    guardAtGate('git commit -m "renamed > foo.mjs"', 'impl-started').decision,
+    'allow',
+  );
+});
+
+test('#128: grep with a redirect-looking quoted pattern is NOT a source write', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'grep "> some/path.mjs" README.md'),
+    false,
+  );
+});
+
+test('#128: tee onto a non-source log target is NOT a source write', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'npm test 2>&1 | tee test-results.log'),
+    false,
+  );
+  assert.equal(
+    guardAtGate('npm test 2>&1 | tee test-results.log', 'impl-started').decision,
+    'allow',
+  );
+});
+
+test('#128: tee onto a source path is STILL a source write (fail-closed kept)', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'npm test 2>&1 | tee lib/gate-guard-core.mjs'),
+    true,
+  );
+  assert.equal(
+    guardAtGate('npm test 2>&1 | tee lib/gate-guard-core.mjs', 'impl-started').decision,
+    'deny',
+  );
+});
+
+test('#128: tee onto a session artifact is STILL a source write', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'echo x | tee .devmate/session/spec.md'),
+    true,
+  );
+});
+
+test('#128: an unquoted redirect onto a source path is STILL a source write', () => {
+  assert.equal(isSourceEditTool('run_in_terminal', 'echo foo > bar.mjs'), true);
+  assert.equal(isSourceEditTool('run_in_terminal', 'somecmd 2>> lib/app.js'), true);
+});
+
+test('#128: a PowerShell cmdlet name quoted inside an argument is NOT a source write', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'git commit -m "document Out-File usage"'),
+    false,
+  );
+});
+
+test('#128: unquoted PowerShell write cmdlets are STILL source writes', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', "Set-Content -Path lib/app.mjs -Value 'x'"),
+    true,
+  );
+  assert.equal(isSourceEditTool('run_in_terminal', "'x' | Out-File lib/app.mjs"), true);
+});
+
+test('#128: operators inside quotes do not split segments', () => {
+  // The && lives inside the quoted commit message: one git segment, benign.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'git commit -m "fix a && b; also c"'),
+    false,
+  );
+});
+
+test('#128: an unclosed quote stays conservative (fail closed on source tokens)', () => {
+  // The dangling quote swallows the rest into one opaque token that still
+  // names a source path — the unknown-segment fail-closed scan must catch it.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'mystery-tool "unterminated lib/app.mjs'),
+    true,
+  );
+});
+
+test('#128: backslash-escaped quotes inside a quoted message do NOT reopen tokenization', () => {
+  // \" inside double quotes must not prematurely close the span — that would
+  // resurface the bare-> false positive this fix exists to kill.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'git commit -m "escape quote: \\"renamed > foo.mjs\\""'),
+    false,
+  );
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'git commit -m "see \\"upgrade > lib/app.mjs now\\" thanks"'),
+    false,
+  );
+});
+
+test('#128: backslash-escaped quotes OUTSIDE quotes cannot hide a real redirect', () => {
+  // POSIX: echo \"x\" > lib/app.mjs really writes lib/app.mjs. The escaped
+  // quotes are literal characters, not span openers — the redirect must be
+  // seen and denied.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'echo \\"x\\" > lib/app.mjs'),
+    true,
+  );
+});
+
+test('#128: Windows path backslashes survive tokenization intact', () => {
+  // \d, \f pairs are consumed as escapes but both bytes are kept, so the
+  // fail-closed source-token scan still sees the full path.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'mystery-tool C:\\dev\\app.mjs'),
+    true,
+  );
+  assert.equal(isSourceEditTool('run_in_terminal', 'cat C:\\dev\\app.mjs'), false);
+});
+
+// ---- #128 review hardening: interpreter wrappers, unbalanced quotes, interior paths ----
+
+test('#128: interpreter wrappers fail closed — the quoted script is opaque', () => {
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'bash -c "sed -i s/a/b/ lib/app.mjs && npm test"'),
+    true,
+  );
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'powershell -Command "Set-Content -Path lib/app.mjs -Value x"'),
+    true,
+  );
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'cmd /c "echo x > lib/app.mjs && dir"'),
+    true,
+  );
+  assert.equal(
+    isSourceEditTool('run_in_terminal', "pwsh -c \"'x' | Out-File lib/app.mjs; write-host done\""),
+    true,
+  );
+  assert.equal(isSourceEditTool('run_in_terminal', 'sh -c "printf x > lib/app.mjs; echo ok"'), true);
+});
+
+test('#128: escaped or odd quotes before a real redirect still deny', () => {
+  // POSIX: the \" stays inside the double-quoted span, so the > that follows
+  // is a live redirect onto an unquoted source path.
+  assert.equal(isSourceEditTool('run_in_terminal', 'echo "say \\"hi" > lib/app.mjs'), true);
+  assert.equal(isSourceEditTool('run_in_terminal', 'echo "\\"" > lib/app.mjs'), true);
+});
+
+test('#128: unclosed quote under a read-only head fails closed on a source token', () => {
+  // The open span swallows the redirect — a read-only head must not vouch
+  // for a line the scanner could not fully classify.
+  assert.equal(isSourceEditTool('run_in_terminal', 'echo "oops > lib/app.mjs'), true);
+});
+
+test('#128: unclosed quote with a NON-terminal source path still fails closed', () => {
+  // The interior scan catches a path buried mid-token, not only at the tail.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'mystery-tool "unterminated lib/app.mjs extra'),
+    true,
+  );
+});
+
+test('#128: unclosed quote naming no gateable path stays allowed', () => {
+  assert.equal(isSourceEditTool('run_in_terminal', 'echo "hello there'), false);
+});
+
+test('#128: quoted prose under a benign head stays allowed despite interior-scan hardening', () => {
+  // The interior scan applies only to the unclassifiable fail-closed net —
+  // a balanced quoted message under git/grep stays benign.
+  assert.equal(
+    isSourceEditTool('run_in_terminal', 'git commit -m "touched lib/app.mjs and lib/b.mjs"'),
+    false,
+  );
 });

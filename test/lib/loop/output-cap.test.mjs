@@ -73,6 +73,46 @@ test('redactSecrets — API_KEY pattern redacted', () => {
   assert.ok(!result.includes('supersecretvalue123'));
 });
 
+test('redactSecrets — bare GitHub PAT (ghp_) redacted, prefix kept (#222)', () => {
+  const body = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab';
+  const result = redactSecrets(`token ghp_${body} used`);
+  assert.ok(result.includes('ghp_[REDACTED]'), result);
+  assert.ok(!result.includes(body), 'PAT body must be redacted');
+});
+
+test('redactSecrets — fine-grained github_pat_ redacted (#222)', () => {
+  const body = 'A'.repeat(40);
+  const result = redactSecrets(`github_pat_${body}`);
+  assert.ok(result.includes('github_pat_[REDACTED]'), result);
+  assert.ok(!result.includes(body));
+});
+
+test('redactSecrets — AWS access key id (AKIA) redacted (#222)', () => {
+  const result = redactSecrets('key AKIAIOSFODNN7EXAMPLE here');
+  assert.ok(result.includes('AKIA[REDACTED]'), result);
+  assert.ok(!result.includes('IOSFODNN7EXAMPLE'));
+});
+
+test('redactSecrets — Slack token (xoxb-) redacted (#222)', () => {
+  const result = redactSecrets('xoxb-123456789012-abcdefABCDEF');
+  assert.ok(result.includes('xoxb-[REDACTED]'), result);
+  assert.ok(!result.includes('abcdefABCDEF'));
+});
+
+test('redactSecrets — PEM private-key block redacted (#222)', () => {
+  const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\nabc123\n-----END RSA PRIVATE KEY-----';
+  const result = redactSecrets(pem);
+  assert.ok(result.includes('[REDACTED]'), result);
+  assert.ok(!result.includes('MIIEpAIBAAKCAQEA'), 'key material must be redacted');
+});
+
+test('redactSecrets — bare 40-hex and 64-hex hashes are NOT redacted (#222 precision)', () => {
+  const sha40 = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4';
+  const sha64 = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+  const input = `fixed in commit ${sha40}; tree ${sha64}`;
+  assert.equal(redactSecrets(input), input);
+});
+
 // ---------------------------------------------------------------------------
 // buildLoopOutput
 // ---------------------------------------------------------------------------

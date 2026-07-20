@@ -151,7 +151,7 @@ test('hook emits nothing on missing state (fresh session) and does not error', a
   }
 });
 
-test('hook never throws on malformed state', async () => {
+test('hook never throws on malformed state, and #171 surfaces it via the unreadable-state anchor', async () => {
   const malformedJson = makeRoot('{ this is not json');
   const invalidShape = makeRoot(
     JSON.stringify({ taskId: 't-1', lane: 'feature', workflowGate: 'bogus-gate' }),
@@ -165,7 +165,11 @@ test('hook never throws on malformed state', async () => {
         stdout: out.stream,
       });
       assert.equal(result.action, 'passthrough', 'malformed state degrades to passthrough');
-      assert.ok(!out.output().includes(ANCHOR_OPEN_TAG), 'no anchor from unreadable state');
+      // #171: a present-but-corrupt state is NOT silent — it emits the
+      // unreadable-state anchor so the diagnostic reaches the model (only an
+      // ABSENT task.json stays a silent no-op).
+      assert.ok(out.output().includes(ANCHOR_OPEN_TAG), 'corrupt state emits the unreadable-state anchor');
+      assert.match(out.output(), /state: unreadable/);
     }
   } finally {
     malformedJson.cleanup();

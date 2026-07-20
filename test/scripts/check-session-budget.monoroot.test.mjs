@@ -22,6 +22,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file (cleared via an after() hook by the helper) and stamp its id into
+// each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-budget-monoroot');
+
 const REPO_ROOT = resolve(import.meta.dirname ?? '.', '..', '..');
 const SCRIPT = resolve(REPO_ROOT, 'scripts', 'check-session-budget.mjs');
 
@@ -83,6 +91,7 @@ test('check-session-budget — monoroot: finds the workspace-root task.json from
   try {
     const { code, stdout, stderr } = await runHook(repoA, {
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
       cwd: repoA,
       tool_name: 'read_file',
       tool_input: { filePath: 'smoke.txt' },
@@ -112,6 +121,7 @@ test('check-session-budget — monoroot: still reports unclassified when no task
 
     const { stdout } = await runHook(repoA, {
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
       cwd: repoA,
       tool_name: 'read_file',
       tool_input: { filePath: 'smoke.txt' },

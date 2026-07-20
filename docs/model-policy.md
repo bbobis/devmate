@@ -212,6 +212,58 @@ and the hint file, so an unverified ID can never be silently enforced.
 > actually selects a model at runtime. They are separate mechanisms; do not read
 > a verified `model-policy.json` entry as evidence that an agent runs that model.
 
+## Cost tier: cheap-vs-powerful routing (E16-6)
+
+The `byBudgetClass` map answers *which model ID*; the **cost tier** answers the
+orthogonal, provider-agnostic question *how much model does this task deserve* —
+route easy work to a cheap model and hard work to a powerful one (Huyen, *AI
+Engineering*, ch10). The tier is a `'cheap' | 'powerful'` label with a
+human-readable reason, computed deterministically by `chooseModelTier(signals)`
+in `lib/routing/model-route.mjs`:
+
+- A `large` budget class (heavy, multi-worker work) selects `powerful`.
+- A `difficulty` at or above `DIFFICULTY_ESCALATION_THRESHOLD` (0.75, shared with
+  the router's existing escalation convention so there is one threshold, not two
+  that can drift) selects `powerful`.
+- Everything else selects `cheap`.
+
+`route-model` derives the difficulty via `deriveDifficulty(budgetClass, acCount)`
+(#217): the **acceptance-criterion count** is the primary, budget-class-independent
+signal — more criteria = a harder task — saturating at `AC_DIFFICULTY_SATURATION`
+(8), so ~6 ACs push any lane to `powerful` regardless of its budget class.
+Crucially, `route-model` runs at the `plan-approved` gate — *before* the spec is
+written — so the AC count comes from the **approved plan** artifact
+(`.devmate/session/<taskId>/plan.json`, summing `tasks[].ac`), which exists then;
+the spec's `state.acceptanceCriteria` is a fallback for any later invocation, and
+the `difficultyFromBudgetClass` proxy (`large` → 0.9, `tiny` → 0.1, else 0.5) is
+the final fallback when neither is available. Both the saturation point and the
+proxy are provisional (`TODO: calibrate`, pending E14-2 telemetry). The resulting
+tier and reason ride along on the dispatch hint at
+`.devmate/state/model-route.json` as `tier` / `tierReason`, alongside the existing
+`modelId` route.
+
+Like `byBudgetClass`, the tier is **advisory metadata only** — whether the plugin
+surface lets devmate actually select or fail over between models is
+platform-dependent and `[UNVERIFIED]`, so the tier never forces a model switch; it
+records the recommendation.
+
+### The model-gateway seam
+
+A *model gateway* centralizes model access so cross-cutting concerns — provider
+failover, cost caps, rate limits — live in one place instead of at every call
+site (Huyen, ch10). devmate has none today, so `lib/routing/model-gateway.mjs`
+defines the seam: a `ModelGateway` interface (`route(request, call)`) plus the
+default `createPassThroughGateway({record?})`, which records the chosen tier via
+an injected sink (a no-op by default) and invokes the call unchanged.
+
+The one in-tree tier decision — `route-model` at dispatch — **routes through this
+seam**: it wraps the `chooseModelTier` result in `gateway.route(...)` and uses the
+record sink as the telemetry log (the tier rides the `model_route` trace event).
+A future failover/cost-cap gateway replaces exactly this one object with no
+call-site changes. The pass-through does **not** select or fail over between
+models — that is platform-dependent and out of scope here — so the routed
+decision stays advisory metadata.
+
 ## CI guard
 
 `scripts/validate-model-policy.mjs` (script: `npm run validate:model-policy`) is
@@ -240,6 +292,15 @@ verification — the desired gate.
   requires a committed baseline before a verified route is honored (E9-11).
 - `assertRoleEvalBaselineExists(role, evalsDir)` / `assertRoleRouteAllowed(route, evalsDir)`
   — FO-7 role variants; fail closed on unknown roles.
+- `chooseModelTier(signals)` — E16-6; deterministic `'cheap' | 'powerful'` tier +
+  reason from `{ budgetClass, difficulty, lane }`.
+- `deriveDifficulty(budgetClass, acCount)` — E16-6/#217; difficulty from the real
+  acceptance-criterion count (saturating at `AC_DIFFICULTY_SATURATION`), falling
+  back to the budget-class proxy when no ACs are on the state.
+- `difficultyFromBudgetClass(budgetClass)` — the budget-class → difficulty proxy,
+  now the fallback for callers with no AC signal yet.
+- `createPassThroughGateway(opts?)` — the default recording pass-through
+  `ModelGateway`; the single seam a future failover implementation replaces.
 
 ## References
 

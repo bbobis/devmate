@@ -226,4 +226,21 @@ describe('agents/orchestrator.agent.md — Step 2 discovery fan-out (FO-5)', () 
     assert.match(body, /If ALL workers came back empty, that is a HALT/);
     assert.match(body, /never a\s+licence to do the discovery yourself/);
   });
+
+  // #156: the orchestrator kept ATTEMPTING to shortcut the lane (dispatching
+  // @fullstack pre-gate, prompting to "advance the gate to impl-started"). The
+  // enforcement layer held every time, but the attempts wasted turns. These pin
+  // the no-shortcut rule that tells the orchestrator not to try in the first place.
+  it('#156 hard rule: never shortcut the lane — act on the anchor legal-next-gates, no @fullstack before impl-started', () => {
+    assert.match(body, /Follow the gate order — never shortcut to implementation/,
+      'the no-shortcut hard rule is missing');
+    assert.match(body, /legal next gates/,
+      'the rule must anchor the next move on the <devmate-state> legal-next-gates');
+    assert.match(body, /Do not dispatch `@fullstack`[^]*until the anchor shows `gate: impl-started`/,
+      'the rule must forbid @fullstack before impl-started');
+    assert.match(body, /`impl-started` is not a legal next gate from `discovery-done`/,
+      'the rule must call out the exact observed shortcut (discovery-done → impl-started)');
+    assert.match(body, /refused as\s+out-of-order[^]*do NOT retry/,
+      'the rule must give the refusal nudge (do the ordered step, do not retry)');
+  });
 });

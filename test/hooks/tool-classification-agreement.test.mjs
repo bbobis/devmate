@@ -22,6 +22,12 @@ import {
   isUnrecognizedTool,
 } from '../../lib/gate-guard-core.mjs';
 import { runWithIO } from '../../hooks/post-tool-use.mjs';
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise the hook inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-tool-classification');
 
 /**
  * A workspace with a persisted task state, so PostToolUse has somewhere to
@@ -60,6 +66,7 @@ async function makeWorkspace() {
 async function runPostToolUse(root, toolName) {
   const payload = {
     hook_event_name: 'PostToolUse',
+    session_id: TEST_SESSION_ID,
     tool_name: toolName,
     cwd: root,
     tool_input: { filePath: 'src/a.mjs' },

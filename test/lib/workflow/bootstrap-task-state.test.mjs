@@ -6,13 +6,14 @@
  * invariants that make moving it into SessionStart safe.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
   bootstrapTaskState,
   deriveTaskId,
+  recoverCorruptState,
 } from "../../../lib/workflow/bootstrap-task-state.mjs";
 import { TASK_ID_RE } from "../../../lib/memory/paths.mjs";
 import { STATE_PATH } from "../../../lib/task-state.mjs";
@@ -123,6 +124,240 @@ test("bootstrapTaskState — writes nothing when the host sends no session id", 
     assert.equal(result.created, false);
     assert.equal(result.reason, "no_session_id");
     assert.throws(() => readFileSync(statePath, "utf8"));
+  } finally {
+    cleanup();
+  }
+});
+
+/**
+ * E10-05 lifecycle: a task at a TERMINAL gate (done/abandoned) is finished,
+ * not live — nothing can transition out of it, so leaving it in place would
+ * wedge the workspace forever (no new task could ever start after an
+ * abandon). A fresh session bootstraps a NEW task over it; the old task's
+ * artifacts stay on disk but no longer match the new taskId, so every
+ * ownership-checking precondition refuses them as stale evidence.
+ */
+/**
+ * Shared body for the two terminal-gate cases below.
+ * @param {string} terminalGate
+ */
+async function assertTerminalTaskReplaced(terminalGate) {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        taskId: "t-finished",
+        lane: "feature",
+        workflowGate: terminalGate,
+        currentStep: 0,
+        artifactHashes: {},
+        preImplStash: null,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+    );
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-next" });
+    assert.equal(result.created, true);
+    assert.equal(result.taskId, "s-sess-next");
+
+    const state = readState(statePath);
+    // The new task inherits NOTHING: fresh id, pre-router gate, step 0.
+    assert.equal(state.taskId, "s-sess-next");
+    assert.equal(state.workflowGate, "no-lane");
+    assert.equal(state.currentStep, 0);
+  } finally {
+    cleanup();
+  }
+}
+
+test("bootstrapTaskState — replaces a terminal task (abandoned) with a fresh no-lane task", async () => {
+  await assertTerminalTaskReplaced("abandoned");
+});
+
+test("bootstrapTaskState — replaces a terminal task (done) with a fresh no-lane task", async () => {
+  await assertTerminalTaskReplaced("done");
+});
+
+test("bootstrapTaskState — an in-flight parked task is NOT terminal and survives a fresh session", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    // parked is a steering pause, not an end: the resume pointer will return
+    // it to its recorded gate. Replacing it here would destroy paused work.
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        taskId: "t-parked",
+        lane: "feature",
+        workflowGate: "parked",
+        currentStep: 0,
+        artifactHashes: {},
+        preImplStash: null,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+    );
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-4" });
+    assert.equal(result.created, false);
+    assert.equal(result.reason, "exists");
+    assert.equal(readState(statePath).taskId, "t-parked");
+  } finally {
+    cleanup();
+  }
+});
+
+test("bootstrapTaskState — an unreadable task.json is left untouched (might be live)", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    writeFileSync(statePath, "{ not json");
+
+    // #191 keeps this #171 default: bootstrap NEVER quarantines — it surfaces
+    // corrupt state and leaves the file. Quarantine is the explicit reset path.
+    const result = await bootstrapTaskState(root, { sessionId: "sess-5" });
+    assert.equal(result.created, false);
+    assert.equal(result.reason, "exists");
+    assert.equal(readFileSync(statePath, "utf8"), "{ not json");
+  } finally {
+    cleanup();
+  }
+});
+
+// ── #191: recoverCorruptState — explicit, human-triggered quarantine + reset ──
+
+test("recoverCorruptState — a CORRUPT state is quarantined (preserved) and a fresh task is bootstrapped", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    writeFileSync(statePath, "{ not json");
+    const result = await recoverCorruptState(root, { sessionId: "sess-5", now: () => 1234 });
+    assert.equal(result.quarantined, true);
+    assert.equal(result.reason, "recovered");
+    assert.equal(result.created, true, "a fresh task was bootstrapped");
+    assert.equal(result.taskId, "s-sess-5");
+    const quarantinePath = `${statePath}.corrupt-1234`;
+    assert.equal(result.quarantinePath, quarantinePath);
+    assert.equal(readFileSync(quarantinePath, "utf8"), "{ not json", "original preserved");
+    assert.equal(readState(statePath).workflowGate, "no-lane", "fresh valid state in place");
+  } finally {
+    cleanup();
+  }
+});
+
+test("recoverCorruptState — the reset does NOT inherit the corrupt task's per-task namespace", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    // Same-session reset reuses the id s-sess-5; seed that id's artifacts, trace,
+    // and memory ledger so we can prove the fresh task does not inherit them.
+    const id = "s-sess-5";
+    const sessionDir = join(root, ".devmate", "session", id);
+    const tracePath = join(root, ".devmate", "state", "trace", `${id}.jsonl`);
+    const ledgerPath = join(root, ".devmate", "memory", "tasks", `${id}.jsonl`);
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "spec.md"), "OLD spec", "utf8");
+    mkdirSync(join(root, ".devmate", "state", "trace"), { recursive: true });
+    writeFileSync(tracePath, '{"type":"stale"}\n', "utf8");
+    mkdirSync(join(root, ".devmate", "memory", "tasks"), { recursive: true });
+    writeFileSync(ledgerPath, '{"fact":"stale"}\n', "utf8");
+
+    writeFileSync(statePath, "{ not json");
+    const result = await recoverCorruptState(root, { sessionId: "sess-5", now: () => 99 });
+    assert.equal(result.created, true);
+
+    // The stale per-task namespace was moved aside (preserved), so the fresh task
+    // starts clean — no inherited spec, no mixed trace, no stale memory.
+    assert.equal(existsSync(join(sessionDir, "spec.md")), false, "old session artifacts moved aside");
+    assert.equal(existsSync(tracePath), false, "old trace moved aside");
+    assert.equal(existsSync(ledgerPath), false, "old memory ledger moved aside");
+    // Preserved in the sidecars.
+    assert.equal(readFileSync(`${tracePath}.corrupt-99`, "utf8"), '{"type":"stale"}\n', "trace preserved");
+    assert.equal(readFileSync(`${ledgerPath}.corrupt-99`, "utf8"), '{"fact":"stale"}\n', "ledger preserved");
+    assert.equal(readFileSync(join(`${sessionDir}.corrupt-99`, "spec.md"), "utf8"), "OLD spec", "session dir preserved");
+  } finally {
+    cleanup();
+  }
+});
+
+test("recoverCorruptState — corrupt with NO sessionId quarantines but defers the fresh task", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    writeFileSync(statePath, "{ not json");
+    const result = await recoverCorruptState(root, { now: () => 7 });
+    assert.equal(result.quarantined, true);
+    assert.equal(result.created, false, "no fresh task without a session id");
+    assert.equal(readFileSync(`${statePath}.corrupt-7`, "utf8"), "{ not json");
+    assert.equal(existsSync(statePath), false, "task.json is absent — next SessionStart bootstraps");
+  } finally {
+    cleanup();
+  }
+});
+
+test("recoverCorruptState — a VALID state is refused untouched", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    await bootstrapTaskState(root, { sessionId: "sess-live" });
+    const before = readFileSync(statePath, "utf8");
+    const result = await recoverCorruptState(root, { sessionId: "sess-live" });
+    assert.equal(result.quarantined, false);
+    assert.equal(result.reason, "valid");
+    assert.equal(result.gate, "no-lane");
+    assert.equal(readFileSync(statePath, "utf8"), before, "valid state untouched");
+  } finally {
+    cleanup();
+  }
+});
+
+test("recoverCorruptState — an ABSENT state is a no-op (no_state)", async () => {
+  const { root, cleanup } = makeWorkspace();
+  try {
+    const result = await recoverCorruptState(root, { sessionId: "s" });
+    assert.equal(result.quarantined, false);
+    assert.equal(result.reason, "no_state");
+  } finally {
+    cleanup();
+  }
+});
+
+test("recoverCorruptState — a genuinely UNREADABLE state (a directory) is refused untouched", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    // EISDIR: present but unreadable, might be live — never quarantined.
+    mkdirSync(statePath);
+    const result = await recoverCorruptState(root, { sessionId: "s" });
+    assert.equal(result.quarantined, false);
+    assert.equal(result.reason, "unreadable");
+    assert.ok(existsSync(statePath), "the unreadable path is untouched");
+  } finally {
+    cleanup();
+  }
+});
+
+test("bootstrapTaskState — a SAME-session resume over a terminal task keeps it (no id reuse)", async () => {
+  const { root, statePath, cleanup } = makeWorkspace();
+  try {
+    // deriveTaskId is deterministic per session: replacing here would mint the
+    // terminal task's own id, and the "new" task would then own the old trace
+    // and every same-taskId artifact — inheriting, not refusing, the old
+    // evidence. Same session ⇒ the finished task is preserved.
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        taskId: "s-sess-same",
+        lane: "feature",
+        workflowGate: "abandoned",
+        currentStep: 0,
+        artifactHashes: {},
+        preImplStash: null,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+    );
+
+    const result = await bootstrapTaskState(root, { sessionId: "sess-same" });
+    assert.equal(result.created, false);
+    assert.equal(result.reason, "exists");
+    assert.equal(readState(statePath).taskId, "s-sess-same");
+    assert.equal(readState(statePath).workflowGate, "abandoned");
   } finally {
     cleanup();
   }

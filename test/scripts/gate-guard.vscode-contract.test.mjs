@@ -24,6 +24,7 @@ import { skipUnlessNode } from '../../lib/test-utils/node-guard.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { withMarkedSession } from '../../lib/test-utils/hook-session.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -42,25 +43,27 @@ const SCRIPT = join(__dirname, '..', '..', 'scripts', 'gate-guard.mjs');
  * @returns {{ decision: string|undefined, reason: string, status: number|null }}
  */
 function runHook(payload, cwd) {
-  const r = spawnSync('node', [SCRIPT], {
-    input: JSON.stringify({ cwd, ...payload }),
-    cwd,
-    encoding: 'utf8',
-    timeout: 10000,
+  return withMarkedSession({ cwd, ...payload }, (marked) => {
+    const r = spawnSync('node', [SCRIPT], {
+      input: JSON.stringify(marked),
+      cwd,
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    const parsed = JSON.parse((r.stdout ?? '').trim());
+    // The host reads ONLY this shape. A bare top-level `decision` is silently
+    // ignored on PreToolUse — which is why the guard denied nothing for so long.
+    assert.ok(
+      parsed.hookSpecificOutput,
+      'PreToolUse verdict must be nested under hookSpecificOutput',
+    );
+    assert.equal(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
+    return {
+      decision: parsed.hookSpecificOutput.permissionDecision,
+      reason: parsed.hookSpecificOutput.permissionDecisionReason ?? '',
+      status: r.status,
+    };
   });
-  const parsed = JSON.parse((r.stdout ?? '').trim());
-  // The host reads ONLY this shape. A bare top-level `decision` is silently
-  // ignored on PreToolUse — which is why the guard denied nothing for so long.
-  assert.ok(
-    parsed.hookSpecificOutput,
-    'PreToolUse verdict must be nested under hookSpecificOutput',
-  );
-  assert.equal(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
-  return {
-    decision: parsed.hookSpecificOutput.permissionDecision,
-    reason: parsed.hookSpecificOutput.permissionDecisionReason ?? '',
-    status: r.status,
-  };
 }
 
 /**

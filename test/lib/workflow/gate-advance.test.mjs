@@ -328,6 +328,97 @@ test('gate-advance › no lane chain contains a human-approval event', () => {
   assert.ok(LANE_CHAINS.chore.includes('start-impl'));
 });
 
+// ── #132: impl-started → verification-passed is hook-driven on every lane ─────
+//
+// Before this, `pass-verification` was in no lane chain and its only firer
+// (`runChoreLane`, reached from tests only) never ran at runtime, so the
+// gate-advance hook stopped at `impl-started` and a feature or bug task could
+// never leave it — the workflow dead-ended where implementation finishes.
+// Removing `pass-verification` from LANE_CHAINS makes
+// both behavioral tests below fail (the gate stays at impl-started), and the
+// structural pin fail — that is the regression this guards.
+
+test('gate-advance › #132: pass-verification is in every lane chain — impl-started is not a dead end', () => {
+  for (const lane of /** @type {const} */ (['feature', 'bug', 'chore'])) {
+    assert.ok(LANE_CHAINS[lane].includes('pass-verification'), lane);
+  }
+});
+
+for (const lane of /** @type {const} */ (['feature', 'bug'])) {
+  test(`gate-advance › #132: the hook advances ${lane} impl-started → verification-passed on passing verify evidence`, async () => {
+    const root = workspace();
+    try {
+      const stateDir = join(root, '.devmate', 'state');
+      const state = taskState({ lane, workflowGate: 'impl-started', artifactHashes: { specDigest: 'deadbeef' } });
+      // task.json on disk carries the spec digest the verification-passed
+      // precondition matches the verify evidence against.
+      writeState(root, 'task.json', state);
+      // Fresh, passing, spec-matching verify evidence owned by THIS task
+      // (AC-coverage is config-off by default), exactly what the loop's verify
+      // step persists.
+      writeState(root, 'verify-result.json', {
+        passed: true,
+        completedAt: new Date().toISOString(),
+        specDigest: 'deadbeef',
+        taskId: state.taskId,
+      });
+
+      const res = await advanceAlongLane(state, { stateDir });
+
+      assert.equal(res.state.workflowGate, 'verification-passed');
+      assert.ok(
+        res.moves.some((m) => m.event === 'pass-verification' && m.from === 'impl-started' && m.to === 'verification-passed'),
+        `no pass-verification move: ${JSON.stringify(res.moves)}`,
+      );
+      // …and it STOPS at the verification-passed human gate ("approve pr"), never
+      // walking on to pr-ready without the human.
+      assert.notEqual(res.state.workflowGate, 'pr-ready');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test(`gate-advance › #132: ${lane} stays at impl-started without verify evidence`, async () => {
+    const root = workspace();
+    try {
+      const stateDir = join(root, '.devmate', 'state');
+      const state = taskState({ lane, workflowGate: 'impl-started', artifactHashes: { specDigest: 'deadbeef' } });
+      writeState(root, 'task.json', state);
+      // No verify-result.json: the precondition is unmet, so the evidence-gated
+      // advance is refused and the gate holds.
+      const res = await advanceAlongLane(state, { stateDir });
+      assert.equal(res.state.workflowGate, 'impl-started');
+      assert.equal(res.moves.length, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test(`gate-advance › #132: ${lane} refuses a PRIOR task's stale verify evidence at impl-started`, async () => {
+    // The stale-evidence hole the auto-advance would otherwise open: verify-result.json
+    // lives at a fixed path and nothing clears it between tasks, and the specDigest
+    // guard is vacuous on bug/chore (no spec). Fresh, passing evidence stamped with a
+    // DIFFERENT task's id must NOT advance this task — ownership is the guard.
+    const root = workspace();
+    try {
+      const stateDir = join(root, '.devmate', 'state');
+      const state = taskState({ lane, workflowGate: 'impl-started', artifactHashes: { specDigest: 'deadbeef' } });
+      writeState(root, 'task.json', state);
+      writeState(root, 'verify-result.json', {
+        passed: true,
+        completedAt: new Date().toISOString(),
+        specDigest: 'deadbeef',
+        taskId: 'SOME-OTHER-TASK',
+      });
+      const res = await advanceAlongLane(state, { stateDir });
+      assert.equal(res.state.workflowGate, 'impl-started');
+      assert.equal(res.moves.length, 0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 // ── the spec digest: recorded by the host, locked once approved ──────────────
 
 test('gate-advance › the spec digest is stamped from the file, not asked of the agent', async () => {

@@ -11,7 +11,11 @@
  *   approve spec                 -> spec-draft          -> spec-approved -> impl-started
  *   approve pr                   -> verification-passed -> pr-ready
  *   revise spec: <feedback>      -> stays in spec-draft, emits spec_revision_requested
+ *                                   + a model-visible redraft instruction (#126)
  *   approve no-tdd reason="..."  -> writes no_tdd_override trace event + spec.md note
+ *   revise scope: <reason>       -> impl-started -> spec-draft  (feature lane, #127)
+ *   re-plan: <reason>            -> impl-started -> plan-done   (feature lane, #127)
+ *   escalate chore to feature: <reason> -> lane chore->feature at plan-approved (#130)
  *
  * E10-03: exact-phrase matching is not a "fast path" — it is the ONLY path. The
  * orchestrator declares no `execute` tool, so it can never issue a gate advance
@@ -52,19 +56,25 @@ import {
   writeTextFile,
 } from "../lib/fs-safe.mjs";
 import { advanceHumanGate } from "../lib/gatectl.mjs";
-import { continueApprovedFeature } from "../lib/workflow/lanes/feature.mjs";
+import { continueApprovedFeature, steerFeature } from "../lib/workflow/lanes/feature.mjs";
+import { escalateChoreToFeature } from "../lib/workflow/lanes/chore.mjs";
 import { transitionGate } from "../lib/gate-transitions.mjs";
-import { buildStateAnchor } from "../lib/orchestrator/state-anchor.mjs";
+import { buildStateAnchor, buildUnreadableStateAnchor } from "../lib/orchestrator/state-anchor.mjs";
+import { checkGateConsistency } from "../lib/gate-consistency.mjs";
 import {
   loadDevmateConfig,
   resolveStaleTaskHours,
 } from "../lib/config/devmate-config.mjs";
 import { evaluateStaleness } from "../lib/task-staleness.mjs";
 import {
+  isStateFileMissing,
+  mutateTaskStateUnderLock,
   readTaskState,
+  STATE_FILE_NOT_FOUND_PREFIX,
   STATE_PATH,
-  writeTaskState,
+  stateVersionOf,
 } from "../lib/task-state.mjs";
+import { recoverCorruptState } from "../lib/workflow/bootstrap-task-state.mjs";
 import { appendTraceEvent } from "../lib/trace/append.mjs";
 import { readTrace } from "../lib/trace/read-trace.mjs";
 import {
@@ -79,8 +89,21 @@ import {
   SKILL_MATCH_MIN_CONFIDENCE,
 } from "../lib/skills/operating-point.mjs";
 import { recordSkillDecision } from "../lib/skills/decision-ledger.mjs";
+import { forceConflictIfArmed } from "../lib/testing/cas-conflict-seam.mjs";
 import { buildSkillMenu, shouldEmitMenu } from "../lib/skills/skill-menu.mjs";
 import { classifyTurnDeterministic } from "../lib/routing/turn-intent.mjs";
+import {
+  APPROVE_PLAN,
+  APPROVE_PR,
+  APPROVE_SPEC,
+  approvalPhraseForGate,
+  ESCALATE_CHORE_PREFIX,
+  NO_TDD_PREFIX,
+  RE_PLAN_PREFIX,
+  RESET_TASK,
+  REVISE_SCOPE_PREFIX,
+  REVISE_SPEC_PREFIX,
+} from "../lib/routing/approval-phrases.mjs";
 import { resolveActiveDomains } from "../lib/context/domain-resolver.mjs";
 
 /** Trace schema version this hook emits. */
@@ -96,6 +119,15 @@ const STEP_ID = "approval-listener";
  */
 const HOOK_ACTOR = "hook-exact-phrase";
 
+/**
+ * #198: bounded retries for the APPROVE_PLAN compare-and-set. A conflict means a
+ * sibling hook committed between the fresh read and the write; recompute the
+ * transition against the newer state. Small — a human types "approve plan" once,
+ * so contention is rare and transient.
+ * @type {number}
+ */
+const APPROVE_PLAN_CAS_ATTEMPTS = 3;
+
 /** @typedef {import('../lib/types.mjs').WorkflowGate} WorkflowGate */
 /** @typedef {import('../lib/types.mjs').TaskState} TaskState */
 
@@ -104,6 +136,7 @@ const HOOK_ACTOR = "hook-exact-phrase";
  * @typedef {Object} UserPromptSubmitEvent
  * @property {string} prompt        Raw user-typed prompt text.
  * @property {string} [taskId]      Optional override; otherwise read from task.json.
+ * @property {string} [sessionId]   Issue 191: host `session_id`, used by the `reset task` recovery to bootstrap a fresh task after quarantining a corrupt one. Optional (the field is optional per the VS Code hook contract).
  * @property {string} [root]        Optional repo root (tests inject a tmp dir).
  * @property {NodeJS.WritableStream} [stdout]  Stream for model-visible output
  *                                  (tests inject a capture stream); defaults to
@@ -119,22 +152,15 @@ const HOOK_ACTOR = "hook-exact-phrase";
  * @property {string} [reason]         No-TDD justification when action is no_tdd_override.
  */
 
-/** Approval phrase literals (lower-cased, trimmed). */
-const APPROVE_SPEC = "approve spec";
-const APPROVE_PR = "approve pr";
-/**
- * Bug/chore lanes: the human approval that opens implementation.
- *
- * These two lanes have no spec gate — their `plan-approved -> impl-started` move
- * was performed by `gatectl workflow set start-impl`, a command the orchestrator
- * prompt instructed but could never run (it declares no `execute` tool). So the
- * gate never moved, `@fullstack` could never be dispatched, and both lanes were
- * dead ends. The orchestrator still cannot advance its own gate — only this
- * hook, on a human's UserPromptSubmit, can.
- */
-const APPROVE_PLAN = "approve plan";
-const REVISE_SPEC_PREFIX = "revise spec:";
-const NO_TDD_PREFIX = "approve no-tdd";
+// Approval phrase literals live in lib/routing/approval-phrases.mjs (#125) —
+// one source shared with the turn-intent labeller and the state anchor, so
+// the phrase a user is TOLD to type can never drift from the phrase this hook
+// matches. On APPROVE_PLAN specifically: the bug/chore lanes have no spec
+// gate — their `plan-approved -> impl-started` move was once a `gatectl`
+// command the orchestrator prompt instructed but could never run (it declares
+// no `execute` tool), so both lanes dead-ended until this hook took it over.
+// The orchestrator still cannot advance its own gate — only this hook, on a
+// human's UserPromptSubmit, can.
 
 /**
  * Parse the `reason="..."` value out of an `approve no-tdd reason="..."`
@@ -203,18 +229,29 @@ async function recordGateTransition(taskId, from, to, root, audit) {
  */
 async function persistContinuationError(at, message, root) {
   const statePath = path.join(root, STATE_PATH);
-  const stateResult = readTaskState(statePath);
-  if (!stateResult.ok) return;
-  const next = /** @type {any} */ ({
-    ...stateResult.state,
-    continuationError: {
-      at,
-      message,
-      ts: new Date().toISOString(),
-      recovery: APPROVE_SPEC,
-    },
-  });
-  await writeTaskState(next, statePath);
+  // #189: atomic merge onto fresh in-lock state. A truly-absent state is a
+  // legitimate no-op (as the prior `if (!ok) return`); any OTHER failure (corrupt
+  // state, lock failure) is now non-throwing, so surface it — a swallowed failure
+  // here is why a continuation retry would never see continuationError.
+  const outcome = await mutateTaskStateUnderLock(
+    (state) =>
+      /** @type {any} */ ({
+        ...state,
+        continuationError: {
+          at,
+          message,
+          ts: new Date().toISOString(),
+          recovery: APPROVE_SPEC,
+        },
+      }),
+    statePath,
+    { event: "continuation-error" },
+  );
+  if (!outcome.ok && !outcome.error.startsWith(STATE_FILE_NOT_FOUND_PREFIX)) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "continuation-error.persist_failed", reason: outcome.error })}\n`,
+    );
+  }
 }
 
 /**
@@ -265,22 +302,34 @@ export function detectNearMissApproval(lower) {
  */
 async function persistTddOverride(reason, root) {
   const statePath = path.join(root, STATE_PATH);
-  const current = readTaskState(statePath);
-  if (!current.ok) return;
-  const prevGuard = current.state.tddGuard ?? {
-    testFileWritten: false,
-    consecutiveNonTestWrites: 0,
-    overrideGranted: false,
-  };
-  const next = {
-    ...current.state,
-    tddGuard: {
-      ...prevGuard,
-      overrideGranted: true,
-      overrideReason: reason,
+  // #189: atomic read-modify-write — the override merges onto the FRESH tddGuard,
+  // so a concurrent gate-guard counter update is not clobbered. A truly-absent
+  // state is a no-op; any other failure is surfaced (a silent swallow would let
+  // the hook proceed as if the override persisted when it did not).
+  const outcome = await mutateTaskStateUnderLock(
+    (state) => {
+      const prevGuard = state.tddGuard ?? {
+        testFileWritten: false,
+        consecutiveNonTestWrites: 0,
+        overrideGranted: false,
+      };
+      return {
+        ...state,
+        tddGuard: {
+          ...prevGuard,
+          overrideGranted: true,
+          overrideReason: reason,
+        },
+      };
     },
-  };
-  await writeTaskState(next, statePath);
+    statePath,
+    { event: "tdd-override" },
+  );
+  if (!outcome.ok && !outcome.error.startsWith(STATE_FILE_NOT_FOUND_PREFIX)) {
+    process.stderr.write(
+      `${JSON.stringify({ event: "tdd-override.persist_failed", reason: outcome.error })}\n`,
+    );
+  }
 }
 
 /**
@@ -333,6 +382,103 @@ function resolveTaskId(event, root) {
   const current = readTaskState(statePath);
   if (current.ok) return current.state.taskId;
   return null;
+}
+
+/**
+ * #127: apply a mid-implementation steering phrase. Mirrors the "approve
+ * plan" branch discipline: parse → call the lane function → degrade every
+ * failure to a model-visible message (never throw) → record the audited
+ * trace event on success. For revise-scope the hook first captures the
+ * scope-change note the event's precondition requires — the phrase IS the
+ * note's content, so the hook is the natural writer.
+ * @param {'revise-scope'|'re-plan'} steeringEvent
+ * @param {string} raw   Original trimmed prompt (evidence + reason source).
+ * @param {string} root  Repo root.
+ * @param {NodeJS.WritableStream} stream  Model-visible output stream.
+ * @returns {Promise<HookResult>}
+ */
+async function handleSteeringPhrase(steeringEvent, raw, root, stream) {
+  /** @param {string} text */
+  const emit = (text) =>
+    stream.write(
+      `${JSON.stringify({
+        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text },
+      })}\n`,
+    );
+  const phrase = steeringEvent === "revise-scope" ? REVISE_SCOPE_PREFIX : RE_PLAN_PREFIX;
+  const reason = raw.slice(raw.indexOf(":") + 1).trim();
+  const stateResult = readTaskState(path.join(root, STATE_PATH));
+  if (!stateResult.ok) {
+    emit(
+      `[devmate] "${phrase}" ignored: no readable task state (${stateResult.errors[0] ?? "unknown"}).`,
+    );
+    return { action: "passthrough" };
+  }
+  const state = stateResult.state;
+  if (state.lane !== "feature") {
+    emit(
+      `[devmate] "${phrase}" steers the feature lane only; this task is on the ${state.lane} lane. ` +
+        `The gate stays at ${state.workflowGate}.`,
+    );
+    return { action: "passthrough" };
+  }
+  if (reason === "") {
+    emit(
+      `[devmate] "${phrase}" needs a reason. Reply with: ${phrase} <what changed and why>`,
+    );
+    return { action: "passthrough" };
+  }
+  try {
+    if (steeringEvent === "revise-scope" && state.workflowGate === "impl-started") {
+      // The revise-scope precondition (lib/gate-preconditions.mjs) demands a
+      // captured scope-change note owned by this task; the reason is the note.
+      // Gate-guarded so a wrong-gate attempt (which steerFeature refuses below)
+      // does not leave a stale task-bound note behind for a later
+      // `gatectl workflow set revise-scope` to ride without a fresh capture.
+      const notePath = path.join(root, ".devmate", "state", "scope-change.json");
+      const tmpPath = `${notePath}.tmp`;
+      await ensureDir(path.dirname(notePath));
+      await writeTextFile(
+        tmpPath,
+        JSON.stringify(
+          { taskId: state.taskId, note: reason, capturedAt: new Date().toISOString() },
+          null,
+          2,
+        ),
+      );
+      await renamePath(tmpPath, notePath);
+    }
+    const result = await steerFeature(state, steeringEvent, { repoRoot: root });
+    // The gate is durably moved from here on — an audit-write failure must
+    // degrade to a warning, never to a "did not move the gate" claim about a
+    // gate that DID move.
+    try {
+      await recordGateTransition(state.taskId, result.from, result.gate, root, {
+        actor: HOOK_ACTOR,
+        evidence: raw,
+      });
+    } catch (/** @type {unknown} */ auditErr) {
+      const auditMsg = auditErr instanceof Error ? auditErr.message : String(auditErr);
+      emit(
+        `[devmate] Steering applied (gate moved ${result.from} -> ${result.gate}) but the ` +
+          `trace audit write failed: ${auditMsg}`,
+      );
+    }
+    emit(
+      steeringEvent === "revise-scope"
+        ? `[devmate] Scope revision captured. Gate moved ${result.from} -> ${result.gate}. ` +
+            `Dispatch @spec-writer with the reason (verbatim): ${reason} — to redraft ` +
+            `.devmate/session/spec.md for the new scope, then re-present it for human review.`
+        : `[devmate] Re-plan captured. Gate moved ${result.from} -> ${result.gate}. ` +
+            `Dispatch @planner with the reason (verbatim): ${reason} — to produce a revised plan, ` +
+            `then continue the feature lane from there.`,
+    );
+    return { action: "gate_advanced", gate: result.gate };
+  } catch (/** @type {unknown} */ err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    emit(`[devmate] "${phrase}" did not move the gate: ${msg}`);
+    return { action: "passthrough" };
+  }
 }
 
 /**
@@ -478,58 +624,92 @@ export async function handleUserPromptSubmit(event) {
 
   if (lower === APPROVE_PLAN) {
     const statePath = path.join(root, STATE_PATH);
-    const stateResult = readTaskState(statePath);
-    if (!stateResult.ok) return { action: "passthrough" };
-    const state = stateResult.state;
+    // #198: bounded CAS loop — transitionGate reads the gate preconditions async,
+    // so recompute the derived state against FRESH state and commit it with a
+    // version pin. On a concurrent write (a subagent counter, an evidence append)
+    // retry rather than blind-overwrite it.
+    for (let planAttempt = 0; planAttempt < APPROVE_PLAN_CAS_ATTEMPTS; planAttempt += 1) {
+      const stateResult = readTaskState(statePath);
+      if (!stateResult.ok) return { action: "passthrough" };
+      const state = stateResult.state;
+      const version = stateVersionOf(state);
 
-    // `transitionGate` — NOT `advanceGate`. advanceGate checks a flattened,
-    // LANE-AGNOSTIC table, in which `plan-approved -> impl-started` is legal
-    // simply because the bug and chore lanes allow it. Using it here would let
-    // "approve plan" walk a FEATURE task straight from plan-approved into
-    // impl-started, skipping the spec gate entirely — the exact HITL-2 bypass
-    // that issues #58/#59 saw in the wild. transitionGate consults the
-    // lane-OWNED table (where the feature lane's plan-approved row accepts only
-    // `draft-spec`) and then runs the target gate's precondition. So the refusal
-    // is structural: it comes from the transition table, not from a hand-written
-    // check here that a later edit could quietly drop.
-    const result = await transitionGate(state, "start-impl", {
-      stateDir: path.join(root, ".devmate", "state"),
-    });
+      // TEST-ONLY seam (#202): deterministically lose this attempt's version race
+      // so the `conflict → continue` retry (and the exhaustion refusal after N) is
+      // covered. Inert unless armed for this site. See lib/testing/cas-conflict-seam.mjs.
+      await forceConflictIfArmed('approve-plan', statePath);
 
-    if (!result.ok) {
-      // Say why, on the channel the model reads. A silently ignored approval is
-      // how a human comes to believe a gate moved when it did not.
-      (event.stdout ?? process.stdout).write(
-        `${JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: "UserPromptSubmit",
-            additionalContext: `[devmate] "approve plan" did not advance the gate: ${result.error}`,
-          },
-        })}\n`,
-      );
-      return { action: "passthrough" };
+      // `transitionGate` — NOT `advanceGate`. advanceGate checks a flattened,
+      // LANE-AGNOSTIC table, in which `plan-approved -> impl-started` is legal
+      // simply because the bug and chore lanes allow it. Using it here would let
+      // "approve plan" walk a FEATURE task straight from plan-approved into
+      // impl-started, skipping the spec gate entirely — the exact HITL-2 bypass
+      // that issues #58/#59 saw in the wild. transitionGate consults the
+      // lane-OWNED table (where the feature lane's plan-approved row accepts only
+      // `draft-spec`) and then runs the target gate's precondition. So the refusal
+      // is structural: it comes from the transition table, not from a hand-written
+      // check here that a later edit could quietly drop.
+      const result = await transitionGate(state, "start-impl", {
+        stateDir: path.join(root, ".devmate", "state"),
+      });
+
+      if (!result.ok) {
+        // Say why, on the channel the model reads. A silently ignored approval is
+        // how a human comes to believe a gate moved when it did not.
+        (event.stdout ?? process.stdout).write(
+          `${JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "UserPromptSubmit",
+              additionalContext: `[devmate] "approve plan" did not advance the gate: ${result.error}`,
+            },
+          })}\n`,
+        );
+        return { action: "passthrough" };
+      }
+
+      // A successful result always carries from/to and the derived next state; the
+      // typedef cannot express that, so verify rather than cast — a gate advance
+      // recorded without its endpoints is unauditable.
+      const { from, to, state: nextState } = result;
+      if (from === undefined || to === undefined || nextState === undefined) {
+        return { action: "passthrough" };
+      }
+
+      // Persist the state `transitionGate` DERIVED, not just the gate name.
+      // `persistGate` writes `workflowGate` alone, which would carry the old
+      // `currentStep` into `impl-started` — a stale step index that the state
+      // anchor and the resume plan both read, so a resumed session would believe
+      // it was already partway through a step it never began. Every other advance
+      // path resets it; this one must too. Committed with a version pin so a
+      // concurrent write is not clobbered.
+      const committed = await mutateTaskStateUnderLock(() => nextState, statePath, {
+        expectedVersion: version,
+        event: "approve-plan",
+      });
+      if (!committed.ok) {
+        if ("conflict" in committed && committed.conflict) continue; // stale — retry
+        // A real write failure (lock/IO/validation). The old writeTaskState threw
+        // here; surface it the same way (non-zero exit) so the gate never claims a
+        // move it did not persist, and recordGateTransition below never runs.
+        throw new Error(`approve plan: state write failed: ${committed.error}`);
+      }
+      await recordGateTransition(state.taskId, from, to, root, {
+        actor: HOOK_ACTOR,
+        evidence: raw,
+      });
+      return { action: "gate_advanced", gate: to };
     }
-
-    // A successful result always carries from/to and the derived next state; the
-    // typedef cannot express that, so verify rather than cast — a gate advance
-    // recorded without its endpoints is unauditable.
-    const { from, to, state: nextState } = result;
-    if (from === undefined || to === undefined || nextState === undefined) {
-      return { action: "passthrough" };
-    }
-
-    // Persist the state `transitionGate` DERIVED, not just the gate name.
-    // `persistGate` writes `workflowGate` alone, which would carry the old
-    // `currentStep` into `impl-started` — a stale step index that the state
-    // anchor and the resume plan both read, so a resumed session would believe
-    // it was already partway through a step it never began. Every other advance
-    // path resets it; this one must too.
-    await writeTaskState(nextState, path.join(root, STATE_PATH));
-    await recordGateTransition(state.taskId, from, to, root, {
-      actor: HOOK_ACTOR,
-      evidence: raw,
-    });
-    return { action: "gate_advanced", gate: to };
+    // Bounded retries exhausted on a persistent conflict — the approval did not
+    // land; ask the model to re-check the gate and retry rather than assume it moved.
+    (event.stdout ?? process.stdout).write(
+      `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: '[devmate] "approve plan" hit repeated concurrent state changes and did not advance. Re-check the gate and try again.',
+        },
+      })}\n`,
+    );
+    return { action: "passthrough" };
   }
 
   if (lower === APPROVE_PR) {
@@ -537,6 +717,7 @@ export async function handleUserPromptSubmit(event) {
     const stateResult = readTaskState(statePath);
     if (!stateResult.ok) return { action: "passthrough" };
     const currentGate = stateResult.state.workflowGate;
+    const lane = stateResult.state.lane;
 
     // Duplicate approval after PR is already ready: friendly no-op.
     if (currentGate === "pr-ready") {
@@ -546,6 +727,36 @@ export async function handleUserPromptSubmit(event) {
             hookEventName: "UserPromptSubmit",
             additionalContext:
               `[devmate] approve pr: PR is already marked ready (gate: pr-ready).`,
+          },
+        })}\n`,
+      );
+      return { action: "passthrough" };
+    }
+
+    // #176: catch the one case advanceHumanGate gets wrong — verification-passed
+    // is the only gate whose `-> pr-ready` edge advanceHumanGate actually honors
+    // (parked is refused by the #20 guard; no other gate reaches pr-ready), and its
+    // FLATTENED, lane-agnostic table advances it for EVERY lane. But approve-pr is
+    // this lane's designated phrase only on feature/bug (approvalPhraseForGate, the
+    // exact predicate #125's state anchor uses to decide whether to ADVERTISE it) —
+    // so a CHORE task at verification-passed walked into pr-ready, a gate the chore
+    // lane is documented never to reach (it completes at verification-passed). #125
+    // guarded the ADVERTISED surface; this guards the executing surface, off the
+    // same single phrase source, so the two cannot drift. Every OTHER gate is left
+    // to advanceHumanGate, which already refuses with the "did not advance … legal
+    // next gates" guidance — this guard is scoped to the walk-hazard alone.
+    if (
+      currentGate === "verification-passed" &&
+      approvalPhraseForGate(currentGate, lane) !== APPROVE_PR
+    ) {
+      (event.stdout ?? process.stdout).write(
+        `${JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit",
+            additionalContext:
+              `[devmate] "approve pr" does not apply on the ${lane} lane: it completes at ` +
+              `verification-passed and never enters pr-ready — this task is already at its ` +
+              `verified terminal, so there is no PR gate to approve.`,
           },
         })}\n`,
       );
@@ -576,22 +787,92 @@ export async function handleUserPromptSubmit(event) {
     }
   }
 
+  // #191: explicit corrupt-state recovery. The unreadable-state anchor names this
+  // phrase; typing it quarantines a CORRUPT task.json (preserved) and starts fresh.
+  // It never touches a valid, absent, or merely-unreadable state — a safe no-op
+  // refusal there — so it can never discard a healthy task.
+  if (lower === RESET_TASK) {
+    const result = await recoverCorruptState(root, {
+      ...(typeof event.sessionId === "string" ? { sessionId: event.sessionId } : {}),
+    });
+    /** @type {string} */
+    let message;
+    if (result.quarantined) {
+      message = result.created
+        ? `[devmate] reset task: quarantined the corrupt task.json to ${result.quarantinePath} ` +
+          `(preserved for diagnosis) and started a fresh task (${result.taskId}).`
+        : `[devmate] reset task: quarantined the corrupt task.json to ${result.quarantinePath} ` +
+          `(preserved for diagnosis). Start a new session to begin a fresh task.`;
+    } else if (result.reason === "valid") {
+      message =
+        `[devmate] reset task: the current task.json is valid (gate: ${result.gate}). ` +
+        `"reset task" only recovers a CORRUPT state — to end this task, use "abandon".`;
+    } else if (result.reason === "no_state") {
+      message = `[devmate] reset task: there is no task.json to reset — you are already at a clean slate.`;
+    } else if (result.reason === "unreadable") {
+      message =
+        `[devmate] reset task: task.json is present but unreadable (a permission or directory error), ` +
+        `not corrupt — devmate will not touch a state it cannot classify. Fix it at the filesystem level.`;
+    } else {
+      message =
+        `[devmate] reset task: could not quarantine the corrupt task.json ` +
+        `(${result.error ?? "unknown error"}); it was left untouched.`;
+    }
+    (event.stdout ?? process.stdout).write(
+      `${JSON.stringify({
+        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message },
+      })}\n`,
+    );
+    return { action: "passthrough" };
+  }
+
   if (lower.startsWith(REVISE_SPEC_PREFIX)) {
     const feedback = parseReviseSpecFeedback(raw);
     const taskId = resolveTaskId(event, root);
-    if (taskId !== null) {
-      await appendTraceEvent(
-        {
-          type: "spec_revision_requested",
-          taskId,
-          stepId: STEP_ID,
-          ts: new Date().toISOString(),
-          schemaVersion: SCHEMA_VERSION,
-          feedback,
-        },
-        { root },
+    // #126: surface the request on the SAME turn, on the channel the model
+    // reads. The HookResult below is discarded by the CLI shim (runWithIO
+    // returns 0 without inspecting it) and nothing ever reads
+    // spec_revision_requested back from the trace — so without this write the
+    // human's request exists only in a file the model never opens, and from
+    // their perspective it simply vanished. Same envelope pattern as the
+    // APPROVE_PLAN failure path above.
+    /** @param {string} text */
+    const emitRevision = (text) =>
+      (event.stdout ?? process.stdout).write(
+        `${JSON.stringify({
+          hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text },
+        })}\n`,
       );
+    // No task in flight: there is no spec to redraft — instructing a
+    // @spec-writer dispatch here would be misleading (the sibling approval
+    // branches bail the same way on an unreadable state).
+    if (taskId === null) {
+      emitRevision(
+        `[devmate] "revise spec:" received, but no task is in flight (no readable task state) — ` +
+          `there is no spec to redraft. Start a task first.`,
+      );
+      return { action: "revision_requested", feedback };
     }
+    await appendTraceEvent(
+      {
+        type: "spec_revision_requested",
+        taskId,
+        stepId: STEP_ID,
+        ts: new Date().toISOString(),
+        schemaVersion: SCHEMA_VERSION,
+        feedback,
+      },
+      { root },
+    );
+    emitRevision(
+      feedback === ""
+        ? `[devmate] Spec revision requested, but no feedback text was provided. ` +
+            `Ask the human what should change before dispatching @spec-writer. ` +
+            `The gate stays at spec-draft until the human replies "${APPROVE_SPEC}".`
+        : `[devmate] Spec revision requested. Feedback (verbatim): ${feedback}\n` +
+            `Dispatch @spec-writer now with this feedback to redraft .devmate/session/spec.md, ` +
+            `then re-present it for review. The gate stays at spec-draft until the human replies "${APPROVE_SPEC}".`,
+    );
     return { action: "revision_requested", feedback };
   }
 
@@ -617,6 +898,88 @@ export async function handleUserPromptSubmit(event) {
     await persistTddOverride(reason, root);
     await appendNoTddNoteToSpec(reason, root);
     return { action: "no_tdd_override", reason };
+  }
+
+  // #127: mid-implementation steering phrases.
+  if (lower.startsWith(REVISE_SCOPE_PREFIX)) {
+    return handleSteeringPhrase("revise-scope", raw, root, event.stdout ?? process.stdout);
+  }
+  if (lower.startsWith(RE_PLAN_PREFIX)) {
+    return handleSteeringPhrase("re-plan", raw, root, event.stdout ?? process.stdout);
+  }
+
+  // #130: chore-to-feature escalation. Mirrors the never-throw discipline of
+  // the other branches: every failure degrades to a model-visible message and
+  // the state stays put. The boundary check keeps a superstring like
+  // "escalate chore to features" from firing with a garbage reason.
+  const afterEscalatePrefix = lower.charAt(ESCALATE_CHORE_PREFIX.length);
+  if (
+    lower.startsWith(ESCALATE_CHORE_PREFIX) &&
+    (afterEscalatePrefix === "" || afterEscalatePrefix === ":" || /\s/.test(afterEscalatePrefix))
+  ) {
+    /** @param {string} text */
+    const emitEscalation = (text) =>
+      (event.stdout ?? process.stdout).write(
+        `${JSON.stringify({
+          hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text },
+        })}\n`,
+      );
+    // Strip an optional (possibly space-padded) colon after the phrase, so
+    // "escalate chore to feature : why" records "why", not ": why".
+    const reason = raw.slice(ESCALATE_CHORE_PREFIX.length).replace(/^\s*:/, "").trim();
+    if (reason === "") {
+      emitEscalation(
+        `[devmate] Escalation needs a reason. Reply with: ${ESCALATE_CHORE_PREFIX}: <why the scope grew>`,
+      );
+      return { action: "passthrough" };
+    }
+    const stateResult = readTaskState(path.join(root, STATE_PATH));
+    if (!stateResult.ok) {
+      emitEscalation(
+        `[devmate] "${ESCALATE_CHORE_PREFIX}" ignored: no readable task state ` +
+          `(${stateResult.errors[0] ?? "unknown"}).`,
+      );
+      return { action: "passthrough" };
+    }
+    const state = stateResult.state;
+    if (state.lane !== "chore") {
+      emitEscalation(
+        `[devmate] "${ESCALATE_CHORE_PREFIX}" applies to a chore-lane task; this task is on the ` +
+          `${state.lane} lane. The gate stays at ${state.workflowGate}.`,
+      );
+      return { action: "passthrough" };
+    }
+    // Escalation is an in-flight move: a task at no-lane has nothing to
+    // escalate, a parked one must resume first, and done/abandoned are
+    // terminal. escalateChoreToFeature itself is gate-blind (it hard-sets
+    // plan-approved), so the gate discipline lives here — mirroring how
+    // continueApprovedChore asserts its own gate.
+    const escalatableGates = ["lane-set", "plan-approved", "impl-started", "verification-passed"];
+    if (!escalatableGates.includes(state.workflowGate)) {
+      emitEscalation(
+        `[devmate] "${ESCALATE_CHORE_PREFIX}" needs an in-flight chore (gate one of: ` +
+          `${escalatableGates.join(", ")}); this task is at ${state.workflowGate}.` +
+          (state.workflowGate === "parked" ? ` Resume it first.` : ""),
+      );
+      return { action: "passthrough" };
+    }
+    try {
+      const next = await escalateChoreToFeature(state, {
+        reason,
+        statePath: path.join(root, STATE_PATH),
+        transitionsPath: path.join(root, ".devmate", "state", "transitions.jsonl"),
+      });
+      emitEscalation(
+        `[devmate] Chore escalated to the feature lane (reason recorded: ${reason}). ` +
+          `The task re-enters at gate ${next.workflowGate} with its taskId preserved; ` +
+          `a fresh plan and spec must now cover the wider scope — continue the feature lane from here.`,
+      );
+      return { action: "gate_advanced", gate: next.workflowGate };
+    } catch (/** @type {unknown} */ err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      emitEscalation(`[devmate] "${ESCALATE_CHORE_PREFIX}" did not escalate: ${msg}`);
+      return { action: "passthrough" };
+    }
   }
 
   // Near-miss detection: a prompt that starts with "approve " but matches no
@@ -646,8 +1009,9 @@ export async function handleUserPromptSubmit(event) {
  * orchestrator to the workflow state in task.json. Legal transitions come
  * from the unified transition table via buildStateAnchor — never a duplicated
  * list. Mirrors the recordSkillMatches non-fatal discipline: a fresh session
- * (no state file) or an invalid state emits nothing, and no failure ever
- * blocks the prompt.
+ * (no state file) emits nothing, and no failure ever blocks the prompt. An
+ * invalid/unreadable state is NOT silent (#171): it emits the unreadable-state
+ * anchor with the validateTaskState diagnostic so corruption reaches the model.
  * During implementation (gate `impl-started`) the anchor also carries per-AC
  * progress, joining the canonical trace with the persisted acceptance-criteria
  * list so the model re-anchors to which ACs remain — not just the coarse gate.
@@ -659,10 +1023,31 @@ export async function emitStateAnchor(root, stream = process.stdout) {
   try {
     const statePath = path.join(root, STATE_PATH);
     const result = readTaskState(statePath);
-    if (!result.ok) return;
+    if (!result.ok) {
+      // #171: distinguish "no task.json (legit pre-task)" from "corrupt task.json".
+      // A missing file has nothing to anchor and stays a silent no-op; an
+      // invalid/unreadable state (the #129 hand-edited (lane, gate) case, or
+      // malformed JSON) surfaces the validateTaskState diagnostic VERBATIM to the
+      // model — otherwise the human who edited task.json to get unstuck gets
+      // silence, the exact symptom #122 exists to kill.
+      if (!isStateFileMissing(result)) {
+        stream.write(`${buildUnreadableStateAnchor(result.errors)}\n`);
+      }
+      return;
+    }
     const state = result.state;
-    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness }} */
+    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness, consistency?: import('../lib/gate-consistency.mjs').GateConsistencyResult }} */
     const anchorOpts = {};
+    // Gate-evidence consistency: a hand-edited task.json, a forged approval, or
+    // a state/trace divergence surfaces as a one-line `state: desynced` field so
+    // the model re-anchors to the last evidence-backed gate. Best-effort — a
+    // failure here must never block the anchor or the prompt.
+    try {
+      const consistency = await checkGateConsistency(state, { root });
+      if (!consistency.ok) anchorOpts.consistency = consistency;
+    } catch {
+      // Non-fatal — the anchor is still emitted without the desync line.
+    }
     // Surface staleness (from the gitignored state file's mtime) so a days-old
     // in-flight task auto-parks for an unrelated new request instead of forcing
     // a park/abandon interrogation. Best-effort: any failure just omits it.
@@ -750,7 +1135,12 @@ async function emitSkillMenu(root, stream, intent) {
   try {
     if (!shouldEmitMenu(intent)) return;
     const { manifests } = await loadMergedSkillManifests(resolveSkillRoots(root));
-    const menu = buildSkillMenu(manifests);
+    // The plugin root travels with the menu because the model has no other way
+    // to locate bundled scripts: a skill's `${PLUGIN_ROOT}/scripts/...` command
+    // is host-expanded only inside hook registrations, never in a terminal the
+    // model opens. This hook process knows the real install path (env or
+    // module-derived), so it advertises it (see buildSkillMenu).
+    const menu = buildSkillMenu(manifests, { pluginRoot: resolvePluginRoot() });
     if (menu !== "") stream.write(`${menu}\n`);
   } catch (/** @type {unknown} */ err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -926,10 +1316,11 @@ function resolveDomainsForPrompt(prompt, root) {
  * left behind by a since-removed config is deleted so state never outlives
  * config. A malformed config is treated the same way (fail-open). When a
  * task is active and the resolved domain ids changed, they are additionally
- * persisted to task.json as `activeDomains` via the writeTaskState lock
- * discipline; an unchanged resolution skips that write so the task file is
- * not churned on every prompt. Pure, bounded, no-LLM computation; failures
- * warn to stderr and never block the prompt.
+ * persisted to task.json as `activeDomains` through a LOCKED read-modify-write
+ * (mutateTaskStateUnderLock, #175) — reading the fresh in-lock state so a
+ * concurrent gate advance is never clobbered; an unchanged resolution skips that
+ * write so the task file is not churned on every prompt. Pure, bounded, no-LLM
+ * computation; failures warn to stderr and never block the prompt.
  * @param {string} root
  * @param {DomainResolution} resolution
  * @returns {Promise<void>}
@@ -943,7 +1334,6 @@ async function recordDomainContext(root, resolution) {
     }
 
     const statePath = path.join(root, STATE_PATH);
-    const current = readTaskState(statePath);
     const matches = resolution.matches;
 
     /** @type {import('../lib/types.mjs').DomainContextState} */
@@ -959,15 +1349,31 @@ async function recordDomainContext(root, resolution) {
     await writeTextFile(tmpPath, JSON.stringify(summary, null, 2));
     await renamePath(tmpPath, outPath);
 
-    if (current.ok) {
-      const ids = matches.map((m) => m.domain);
-      const previous = current.state.activeDomains ?? [];
+    // #175: persist activeDomains onto task.json through a LOCKED
+    // read-modify-write, reading the FRESH in-lock state so a concurrent gate
+    // advance from another session can never be clobbered by a stale merge. The
+    // former read-then-writeTaskState pattern read outside the lock and wrote back
+    // `...current.state`, which carried a stale gate.
+    //
+    // A cheap preflight keeps the prior "no active task ⇒ silent skip" behaviour
+    // and avoids creating the state dir / lock file when there is nothing to
+    // record — it is only a gate, never the merge base: the authoritative read is
+    // still the fresh in-lock one below.
+    if (!readTaskState(statePath).ok) return;
+    const ids = matches.map((m) => m.domain);
+    const outcome = await mutateTaskStateUnderLock((state) => {
+      const previous = state.activeDomains ?? [];
       const changed =
         ids.length !== previous.length ||
         ids.some((id, i) => id !== previous[i]);
-      if (changed) {
-        await writeTaskState({ ...current.state, activeDomains: ids }, statePath);
-      }
+      return changed ? { ...state, activeDomains: ids } : null;
+    }, statePath);
+    // A lock/commit failure here is non-fatal (best-effort) but must not vanish —
+    // surface it on the same channel the outer catch uses.
+    if (!outcome.ok) {
+      process.stderr.write(
+        `approval-listener: domain context activeDomains write skipped (non-fatal): ${outcome.error}\n`,
+      );
     }
   } catch (/** @type {unknown} */ err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1029,6 +1435,7 @@ async function recordTurnIntent(prompt, root) {
  * @property {string} [prompt]           Raw user-typed prompt text.
  * @property {string} [cwd]              Working directory from stdin JSON.
  * @property {string} [hook_event_name]  Official hook event name.
+ * @property {string} [session_id]       Host session id (optional per the VS Code hook contract); threaded to the #191 reset-task recovery.
  */
 
 /**
@@ -1103,7 +1510,12 @@ export async function runWithIO(stdin, stdout, stderr) {
   // state lands in .devmate/state/, not .devmate/.devmate/state/.
   const root = resolveHookRoot(payload);
   try {
-    await handleUserPromptSubmit({ prompt: payload.prompt, root, stdout });
+    await handleUserPromptSubmit({
+      prompt: payload.prompt,
+      root,
+      stdout,
+      ...(typeof payload.session_id === "string" ? { sessionId: payload.session_id } : {}),
+    });
     return 0;
   } catch (/** @type {unknown} */ err) {
     const msg = err instanceof Error ? err.message : String(err);

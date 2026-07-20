@@ -1,0 +1,8 @@
+{
+  "claims": [
+    { "fact": "Feature lane step 2 dispatches discovery", "path": "agents/orchestrator.agent.md#L162", "confidence": "high" },
+    { "fact": "Gate order is a frozen transition table", "path": "lib/gate-transitions.mjs", "confidence": "high" },
+    { "fact": "Evidence is a pointer, not pasted content", "path": "docs/PATTERNS.md#L57", "confidence": "low" }
+  ],
+  "unverified": []
+}

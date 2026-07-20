@@ -1,5 +1,11 @@
 // @ts-check
-// Agent-invoked entrypoint (E5-2): `/devmate-chore-continue`.
+// Manual/recovery CLI (E5-2; reframed by #130). NOT agent-invoked at runtime:
+// the orchestrator (which owns the workflow) declares no execute tool, and no
+// hook, skill, or agent instruction wires this script. The chore lane's
+// plan-approved -> impl-started move happens in hooks/approval-listener.mjs on
+// the human phrase "approve plan" (the generic, lane-blind start-impl path);
+// this script remains for a human running it by hand in a terminal — e.g. to
+// recover a session whose approval hook cannot fire.
 //
 // Continues an approved chore into the executing phase WITHOUT resetting state.
 // Loads TaskState, runs the reset guard against a `__self__` sentinel (to catch

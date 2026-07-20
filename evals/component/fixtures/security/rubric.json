@@ -1,0 +1,13 @@
+{
+  "_comment": "Expected-output rubric for the security component eval (E16-4). Paths use a synthetic 'sample/' namespace — a security finding is necessarily illustrative (there is no real vuln in this repo to point at), so the pointers are fixture-local, not repo paths. knownVulns = evidence pointers (file#Lline) a correct security pass MUST flag (recall); missing = missed known vulns (false negatives). cleanPaths = files with no vuln; a finding on one is a false positive (precision); spurious = those false positives. Score is F1 of precision and recall. A finding on a file that is neither a known vuln nor a declared clean path is neither credited nor penalized (no ground truth). Thresholds are provisional — calibrate after the first baseline run (see docs/PATTERNS.md P7).",
+  "knownVulns": [
+    "sample/auth-guard.mjs#L42",
+    "sample/fs-read.mjs#L19"
+  ],
+  "cleanPaths": [
+    "sample/formatter.mjs",
+    "sample/pure-helper.mjs"
+  ],
+  "passThreshold": 0.8,
+  "expectedGoodScore": 1
+}

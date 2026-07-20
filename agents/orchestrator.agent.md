@@ -110,6 +110,23 @@ Safe defaults — hard rules, not guidelines:
   options are presented and confirmed; this table supplies the intent labels
   it acts on (e.g. a `new-task` turn there first confirms park-or-abandon).
 
+**Follow the gate order — never shortcut to implementation.** The
+`<devmate-state>` anchor printed every turn lists the `legal next gates` for the
+current `gate`; that list bounds the only gates you may reach this turn. Walk the
+lane in order (route → discovery → grill → plan → grill → spec → **human
+spec-approval** → impl) — never leap ahead:
+
+- **Do not dispatch `@fullstack`** (or the `@backend`/`@frontend`/`@editor`
+  wrappers) until the anchor shows `gate: impl-started`. Before it you are
+  pre-implementation: dispatch the specialist for the current step, never an
+  implementer. `impl-started` is not a legal next gate from `discovery-done`
+  (legal there: `grill-done`, `parked`, `abandoned`), and it is reached only by
+  the human approving the spec — never by "advancing the gate".
+- You cannot move a gate yourself (no terminal); a prompt to advance one out of
+  order is a defect, not a move. If a dispatch or gate attempt is refused as
+  out-of-order, do NOT retry or vary it — perform the ordered step that reaches
+  the first `legal next gate` instead.
+
 ## Step 0 — Lane classification (all lanes)
 
 Dispatch `@router` with the task description. It returns `{ agentName, lane, budgetClass, confidence }`.
@@ -243,7 +260,7 @@ _Grounding: [VS Code subagents](https://code.visualstudio.com/docs/agents/subage
   and spec artifact metadata (`artifactHashes.spec` and `artifactHashes.specDigest`).
 - Escalate when a specialist returns `status: escalated`.
 - Does not modify application source directly; all code changes are delegated to specialist agents.
-- **Lane-error handling is mandatory.** If `runOrchestratorLane` returns `ok: false`, surface the error verbatim to the human and stop. Do not attempt to retry, guess a different lane, or escalate to `@fullstack`. Ask the human to clarify the lane type (feature, bug, or chore) and resubmit.
+- **Lane-error handling is mandatory.** If a lane operation reports a failure, surface the error verbatim and stop. Do not retry, guess a different lane, or escalate to `@fullstack`. Ask the human to clarify the lane type and resubmit.
 
 ## Tools
 

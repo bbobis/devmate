@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   contentDigest16,
+  normalizeForDigest,
   DISCOVERY_FACT_TOOL,
   writeDiscoveryFacts,
 } from '../../../lib/memory/discovery-facts.mjs';
@@ -75,6 +76,28 @@ function claim(fact, p, over = {}) {
 function artifact(claims) {
   return { agentName: 'discovery', claims, unverified: [] };
 }
+
+// ── #148: checkout-invariant content digest ──────────────────────────────────
+
+test('#148 contentDigest16 › identical logical content hashes the same on LF and CRLF', () => {
+  const lf = 'export const a = 1;\nexport const b = 2;\n';
+  const crlf = 'export const a = 1;\r\nexport const b = 2;\r\n';
+  assert.notEqual(lf, crlf, 'the two checkouts genuinely differ by line ending');
+  assert.equal(
+    contentDigest16(lf),
+    contentDigest16(crlf),
+    'a digest computed on an LF checkout must not be false-stale on a CRLF checkout of the same commit',
+  );
+  // A lone CR (old-Mac) also normalizes to the same logical content.
+  assert.equal(contentDigest16('a\rb'), contentDigest16('ab'));
+});
+
+test('#148 normalizeForDigest › strips CR, leaving logical content identical across line endings', () => {
+  assert.equal(normalizeForDigest('a\r\nb\r\n'), 'a\nb\n');
+  assert.equal(normalizeForDigest('a\nb\n'), 'a\nb\n');
+  assert.equal(normalizeForDigest('a\rb'), 'ab');
+  assert.equal(normalizeForDigest('no line endings'), 'no line endings');
+});
 
 test('writeDiscoveryFacts › written facts match the ledger FactEntry schema exactly', async () => {
   const root = await buildRepo({ 'lib/auth.mjs': 'export const a = 1;\n' });

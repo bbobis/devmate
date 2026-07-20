@@ -28,14 +28,15 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { assertNodeVersion, isMainModule } from "../lib/env-guard.mjs";
 import { resolveHookRoot } from "../lib/init/repo-root.mjs";
+import { isDevmatePayload } from "../lib/hooks/session-marker.mjs";
 import { readTextFile } from "../lib/fs-safe.mjs";
 import { createTextCapture, writeHookOutput } from "../lib/hooks/output-schema.mjs";
 import { firstToolInputPath } from "../lib/hooks/tool-input.mjs";
 import { advanceGate } from "../lib/gatectl.mjs";
 import {
+  mutateTaskStateUnderLock,
   readTaskState,
   STATE_PATH,
-  writeTaskState,
 } from "../lib/task-state.mjs";
 import { appendTraceEvent } from "../lib/trace/append.mjs";
 import { digestsEqual } from "../lib/digest-compare.mjs";
@@ -126,18 +127,29 @@ function resolveTaskId(event, repoRoot) {
  */
 async function rollbackState(nextGate, newDigest, repoRoot) {
   const statePath = path.join(repoRoot, STATE_PATH);
-  const current = readTaskState(statePath);
-  if (!current.ok) return null;
-  const next = /** @type {TaskState} */ ({
-    ...current.state,
-    workflowGate: nextGate,
-    artifactHashes: {
-      ...current.state.artifactHashes,
-      specDigest: newDigest,
+  // #189: atomic read-modify-write — the rollback merges onto the FRESH in-lock
+  // state, so a concurrent gate advance can no longer be clobbered by (or clobber)
+  // this rollback. The merged state is captured for the return; a missing/corrupt
+  // state or lock failure yields null, exactly as the prior `!current.ok` did.
+  /** @type {TaskState | undefined} */
+  let next;
+  const outcome = await mutateTaskStateUnderLock(
+    (current) => {
+      const merged = /** @type {TaskState} */ ({
+        ...current,
+        workflowGate: nextGate,
+        artifactHashes: {
+          ...current.artifactHashes,
+          specDigest: newDigest,
+        },
+      });
+      next = merged;
+      return merged;
     },
-  });
-  await writeTaskState(next, statePath);
-  return next;
+    statePath,
+    { event: "spec-integrity-rollback" },
+  );
+  return outcome.ok ? (next ?? null) : null;
 }
 
 /**
@@ -228,10 +240,15 @@ export async function handlePostToolUse(event, opts = {}) {
   }
 
   const nextGate = advanceGate(currentGate, "spec-draft");
-  await rollbackState(nextGate, newDigest, repoRoot);
+  // #189: mutateTaskStateUnderLock is non-throwing, so a lock/IO failure yields
+  // null instead of aborting. Do NOT claim (or trace) a rollback that did not
+  // persist — that would be a silent fail-open on the post-approval tamper guard.
+  // The PostToolUse spec-digest re-verify is the backstop on the next edit.
+  const rolledState = await rollbackState(nextGate, newDigest, repoRoot);
+  const persisted = rolledState !== null;
 
   const taskId = resolveTaskId(event, repoRoot);
-  if (taskId !== null) {
+  if (taskId !== null && persisted) {
     await recordSpecInvalidated(
       taskId,
       "post-approval edit detected",
@@ -241,8 +258,11 @@ export async function handlePostToolUse(event, opts = {}) {
   }
 
   stdout.write(
-    "WARN: spec.md changed after approval. Gate rolled back to spec-draft.\n" +
-      "    Run: approve spec   to re-approve the updated spec.\n",
+    persisted
+      ? "WARN: spec.md changed after approval. Gate rolled back to spec-draft.\n" +
+          "    Run: approve spec   to re-approve the updated spec.\n"
+      : "WARN: spec.md changed after approval, but the gate rollback could not be persisted " +
+          "(state locked or unreadable). The gate stays spec-approved; it will be re-attempted on the next edit.\n",
   );
 
   return {
@@ -344,6 +364,11 @@ export async function main(_args) {
     );
     return 0;
   }
+
+  // Runtime scope: plugin-level hooks fire in EVERY Copilot session. Act only
+  // inside a marked devmate session (lib/hooks/session-marker.mjs); otherwise
+  // exit silently — no gate rollback, no state writes.
+  if (!isDevmatePayload(parsed)) return 0;
 
   // The handler prints its rollback notice as human text. On exit 0 VS Code
   // parses stdout as JSON, so raw text is not "a message the model might miss" —

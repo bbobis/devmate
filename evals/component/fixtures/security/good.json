@@ -1,0 +1,8 @@
+{
+  "findings": [
+    { "severity": "critical", "description": "Auth bypass in route guard", "path": "sample/auth-guard.mjs#L42" },
+    { "severity": "medium", "description": "Path traversal in sync read", "path": "sample/fs-read.mjs#L19" }
+  ],
+  "passed": false,
+  "unverified": []
+}

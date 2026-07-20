@@ -18,6 +18,7 @@ import {
   parseReviseSpecFeedback,
 } from "../../hooks/approval-listener.mjs";
 import { parseJsonl } from "../../lib/json-io.mjs";
+import { mutateTaskStateUnderLock } from "../../lib/task-state.mjs";
 
 /** @typedef {import('../../lib/types.mjs').TaskState} TaskState */
 
@@ -154,10 +155,15 @@ test('approval-listener — "approve pr" advances gate to pr-ready', async () =>
 
 test('approval-listener — "revise spec: add more edge cases" emits spec_revision_requested with feedback', async () => {
   const fx = makeFixture();
+  const capture = { chunks: /** @type {string[]} */ ([]) };
+  const mockStdout = {
+    write(/** @type {unknown} */ chunk) { capture.chunks.push(String(chunk)); return true; },
+  };
   try {
     const result = await handleUserPromptSubmit({
       prompt: "revise spec: add more edge cases",
       root: fx.root,
+      stdout: /** @type {any} */ (mockStdout),
     });
     assert.equal(result.action, "revision_requested");
     assert.equal(result.feedback, "add more edge cases");
@@ -168,6 +174,57 @@ test('approval-listener — "revise spec: add more edge cases" emits spec_revisi
     // Gate must not change for a revise request.
     const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
     assert.equal(state.workflowGate, "spec-draft");
+    // #126: the feedback must reach the model on the SAME turn — the
+    // HookResult is discarded by the CLI shim and nothing reads the trace
+    // event back, so stdout is the only surface the model ever sees.
+    const output = capture.chunks.join("");
+    assert.ok(
+      output.includes("add more edge cases"),
+      "stdout must carry the verbatim feedback",
+    );
+    assert.ok(
+      output.includes("@spec-writer"),
+      "stdout must instruct the model to re-dispatch @spec-writer",
+    );
+    // Assert the sentence unique to the NEW message — the always-on state
+    // anchor already renders "gate: spec-draft" into the same stream, so a
+    // bare substring check on the gate name would pass on pre-fix code.
+    assert.ok(
+      output.includes("The gate stays at spec-draft"),
+      "stdout must state the gate stays at spec-draft",
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — "revise spec:" with no feedback still surfaces a model-visible ask', async () => {
+  const fx = makeFixture();
+  const capture = { chunks: /** @type {string[]} */ ([]) };
+  const mockStdout = {
+    write(/** @type {unknown} */ chunk) { capture.chunks.push(String(chunk)); return true; },
+  };
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "revise spec:",
+      root: fx.root,
+      stdout: /** @type {any} */ (mockStdout),
+    });
+    assert.equal(result.action, "revision_requested");
+    assert.equal(result.feedback, "");
+    const output = capture.chunks.join("");
+    assert.ok(
+      output.includes("no feedback text was provided"),
+      "empty feedback must be flagged, not silently echoed as blank",
+    );
+    assert.ok(
+      output.includes("Ask the human what should change"),
+      "empty feedback must steer an ask, not a blind dispatch",
+    );
+    assert.ok(
+      !output.includes("Dispatch @spec-writer now"),
+      "empty feedback must not instruct an immediate dispatch",
+    );
   } finally {
     fx.cleanup();
   }
@@ -635,4 +692,446 @@ test("detectNearMissApproval — word-boundary check: 'approve pull request' mat
   const r = detectNearMissApproval("approve pull request");
   assert.ok(r !== null);
   assert.equal(r.phrase, "approve pr");
+});
+
+// ---------------------------------------------------------------------------
+// #127: mid-implementation steering phrases wire steerFeature
+// ---------------------------------------------------------------------------
+
+/**
+ * A structurally valid CritiqueResult for the plan-done precondition
+ * (re-checked by the re-plan steering edge).
+ * @param {string} taskId
+ * @returns {Record<string, unknown>}
+ */
+function critiqueResultFor(taskId) {
+  return {
+    taskId,
+    mode: "critique",
+    schemaVersion: 1,
+    returnedAt: "2026-01-01T00:00:00.000Z",
+    missingAcceptanceCriteria: [],
+    missingTests: [],
+    riskySequencing: [],
+    unlistedFiles: [],
+    backwardsCompatRisks: [],
+    rollbackRisk: "low — revert the single commit",
+    verdict: "APPROVE_PLAN",
+  };
+}
+
+/** @returns {{ chunks: string[], stdout: { write: (c: unknown) => boolean } }} */
+function makeCapture() {
+  /** @type {string[]} */
+  const chunks = [];
+  return { chunks, stdout: { write(/** @type {unknown} */ c) { chunks.push(String(c)); return true; } } };
+}
+
+test('approval-listener — "revise scope: <reason>" at impl-started captures the note and returns to spec-draft', async () => {
+  const fx = makeFixture({ workflowGate: "impl-started" });
+  const cap = makeCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "revise scope: also handle CSV export",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "gate_advanced");
+    assert.equal(result.gate, "spec-draft");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.workflowGate, "spec-draft");
+    assert.equal(state.taskId, "feat-101", "steering must continue the SAME task");
+    // The hook itself captured the precondition artifact from the phrase.
+    const note = JSON.parse(
+      readFileSync(join(fx.root, ".devmate", "state", "scope-change.json"), "utf8"),
+    );
+    assert.equal(note.taskId, "feat-101");
+    assert.equal(note.note, "also handle CSV export");
+    // The audited trace event carries the hook actor + verbatim evidence.
+    const events = readTrace(fx.tracePath);
+    const transition = events.find((e) => e["type"] === "gate_transition");
+    assert.ok(transition, "gate_transition trace event must be recorded");
+    assert.equal(transition["from"], "impl-started");
+    assert.equal(transition["to"], "spec-draft");
+    assert.equal(transition["evidence"], "revise scope: also handle CSV export");
+    // Model-visible next step.
+    const output = cap.chunks.join("");
+    assert.ok(output.includes("@spec-writer"), "stdout must steer a spec redraft");
+    assert.ok(output.includes("also handle CSV export"), "stdout must carry the verbatim reason");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — "re-plan: <reason>" at impl-started returns to plan-done', async () => {
+  const fx = makeFixture({ workflowGate: "impl-started" });
+  const cap = makeCapture();
+  // The re-plan edge re-checks the plan-done critique-result precondition.
+  writeFileSync(
+    join(fx.root, ".devmate", "state", "critique-result.json"),
+    JSON.stringify(critiqueResultFor("feat-101"), null, 2),
+    "utf8",
+  );
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "re-plan: switch to a queue-based approach",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "gate_advanced");
+    assert.equal(result.gate, "plan-done");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.workflowGate, "plan-done");
+    const output = cap.chunks.join("");
+    assert.ok(output.includes("@planner"), "stdout must steer a plan revision");
+    assert.ok(output.includes("switch to a queue-based approach"));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — steering at the wrong gate degrades to a message, never throws', async () => {
+  const fx = makeFixture(); // spec-draft
+  const cap = makeCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "revise scope: change everything",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.workflowGate, "spec-draft", "gate must not move");
+    const output = cap.chunks.join("");
+    assert.ok(
+      output.includes("did not move the gate"),
+      "the refusal must be model-visible, not a crash",
+    );
+    // The refused attempt must not leave a stale task-bound note behind for a
+    // later gatectl revise-scope to ride without a fresh capture.
+    assert.ok(
+      !existsSync(join(fx.root, ".devmate", "state", "scope-change.json")),
+      "a wrong-gate attempt must not capture a note",
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — steering on a non-feature lane degrades to a message', async () => {
+  const fx = makeFixture({ lane: "bug", workflowGate: "impl-started" });
+  const cap = makeCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "re-plan: different approach",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.workflowGate, "impl-started", "gate must not move");
+    assert.ok(cap.chunks.join("").includes("feature lane only"));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — a steering phrase without a reason asks for one', async () => {
+  const fx = makeFixture({ workflowGate: "impl-started" });
+  const cap = makeCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "revise scope:",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough");
+    assert.ok(cap.chunks.join("").includes("needs a reason"));
+    assert.ok(
+      !existsSync(join(fx.root, ".devmate", "state", "scope-change.json")),
+      "no note may be captured without a reason",
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — "revise spec:" with NO task in flight says so instead of instructing a redraft', async () => {
+  const root = mkdtempSync(join(tmpdir(), "devmate-approval-notask-"));
+  const capture = { chunks: /** @type {string[]} */ ([]) };
+  const mockStdout = {
+    write(/** @type {unknown} */ chunk) { capture.chunks.push(String(chunk)); return true; },
+  };
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "revise spec: change X",
+      root,
+      stdout: /** @type {any} */ (mockStdout),
+    });
+    assert.equal(result.action, "revision_requested");
+    const output = capture.chunks.join("");
+    assert.ok(output.includes("no task is in flight"), "must say there is nothing to redraft");
+    assert.ok(
+      !output.includes("Dispatch @spec-writer now"),
+      "must not instruct redrafting a nonexistent spec",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #130: "escalate chore to feature: <reason>" wires escalateChoreToFeature
+// ---------------------------------------------------------------------------
+
+/** @returns {{ chunks: string[], stdout: { write: (c: unknown) => boolean } }} */
+function makeEscalationCapture() {
+  /** @type {string[]} */
+  const chunks = [];
+  return { chunks, stdout: { write(/** @type {unknown} */ c) { chunks.push(String(c)); return true; } } };
+}
+
+test('approval-listener — chore escalation phrase re-enters the feature lane at plan-approved', async () => {
+  const fx = makeFixture({ lane: "chore", workflowGate: "plan-approved" });
+  const cap = makeEscalationCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to feature: scope grew beyond a mechanical edit",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "gate_advanced");
+    assert.equal(result.gate, "plan-approved");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.lane, "feature", "lane must switch to feature");
+    assert.equal(state.workflowGate, "plan-approved", "feature lane re-enters at plan-approved");
+    assert.equal(state.taskId, "feat-101", "escalation must preserve the taskId");
+    // The lane_transition audit entry carries the reason.
+    const transitions = readTrace(join(fx.root, ".devmate", "state", "transitions.jsonl"));
+    const laneTransition = transitions.find((e) => e["event"] === "lane_transition");
+    assert.ok(laneTransition, "lane_transition audit entry must be written");
+    assert.equal(laneTransition["from"], "chore");
+    assert.equal(laneTransition["to"], "feature");
+    assert.equal(laneTransition["reason"], "scope grew beyond a mechanical edit");
+    // Model-visible confirmation.
+    assert.ok(cap.chunks.join("").includes("escalated to the feature lane"));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — chore escalation from impl-started also lands at plan-approved', async () => {
+  const fx = makeFixture({ lane: "chore", workflowGate: "impl-started" });
+  const cap = makeEscalationCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to feature: needs real logic changes",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "gate_advanced");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.lane, "feature");
+    assert.equal(state.workflowGate, "plan-approved");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — escalation without a reason degrades to a model-visible ask', async () => {
+  const fx = makeFixture({ lane: "chore", workflowGate: "plan-approved" });
+  const cap = makeEscalationCapture();
+  try {
+    const before = readFileSync(fx.statePath, "utf8");
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to feature",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough");
+    assert.equal(readFileSync(fx.statePath, "utf8"), before, "state must not change");
+    assert.ok(cap.chunks.join("").includes("needs a reason"));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — escalation on a non-chore lane degrades to a message, never throws', async () => {
+  const fx = makeFixture({ lane: "feature", workflowGate: "plan-approved" });
+  const cap = makeEscalationCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to feature: not actually a chore",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough");
+    const state = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(state.lane, "feature");
+    assert.equal(state.workflowGate, "plan-approved");
+    assert.ok(cap.chunks.join("").includes("applies to a chore-lane task"));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — a space before the escalation colon still records a clean reason', async () => {
+  const fx = makeFixture({ lane: "chore", workflowGate: "plan-approved" });
+  const cap = makeEscalationCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to feature : retry needs a real fix",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "gate_advanced");
+    const transitions = readTrace(join(fx.root, ".devmate", "state", "transitions.jsonl"));
+    const lt = transitions.find((e) => e["event"] === "lane_transition");
+    assert.ok(lt, "lane_transition audit entry must be written");
+    assert.equal(lt["reason"], "retry needs a real fix", "reason must not keep the stray colon");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — a superstring phrase ("...to features") does NOT fire the escalation', async () => {
+  const fx = makeFixture({ lane: "chore", workflowGate: "plan-approved" });
+  const cap = makeEscalationCapture();
+  try {
+    const before = readFileSync(fx.statePath, "utf8");
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to features: garbled",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough");
+    assert.equal(readFileSync(fx.statePath, "utf8"), before, "state must not change");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/**
+ * Assert the escalation phrase refuses at a non-in-flight gate: passthrough,
+ * no state mutation, and a model-visible reason.
+ * @param {import('../../lib/types.mjs').WorkflowGate} gate
+ * @returns {Promise<void>}
+ */
+async function assertEscalationRefusedAt(gate) {
+  const fx = makeFixture({ lane: "chore", workflowGate: gate });
+  const cap = makeEscalationCapture();
+  try {
+    const before = readFileSync(fx.statePath, "utf8");
+    const result = await handleUserPromptSubmit({
+      prompt: "escalate chore to feature: too late or too early",
+      root: fx.root,
+      stdout: /** @type {any} */ (cap.stdout),
+    });
+    assert.equal(result.action, "passthrough", `gate ${gate} must refuse`);
+    assert.equal(readFileSync(fx.statePath, "utf8"), before, `state changed at ${gate}`);
+    assert.ok(
+      cap.chunks.join("").includes("in-flight chore"),
+      `no model-visible refusal at ${gate}`,
+    );
+  } finally {
+    fx.cleanup();
+  }
+}
+
+test('approval-listener — escalation refuses non-in-flight gates with a model-visible reason', async () => {
+  await assertEscalationRefusedAt("no-lane");
+  await assertEscalationRefusedAt("done");
+  await assertEscalationRefusedAt("parked");
+  await assertEscalationRefusedAt("abandoned");
+});
+
+
+// ── #191: "reset task" — explicit corrupt-state recovery ──────────────────────
+
+/** A capturing stdout stub for the reset-task tests. */
+function makeResetCapture() {
+  const chunks = /** @type {string[]} */ ([]);
+  return {
+    stream: /** @type {any} */ ({ write(/** @type {unknown} */ c) { chunks.push(String(c)); return true; } }),
+    text: () => chunks.join(""),
+  };
+}
+
+test('approval-listener — "reset task" quarantines a CORRUPT state and starts fresh', async () => {
+  const fx = makeFixture();
+  // Corrupt the state AFTER the fixture wrote a valid one.
+  writeFileSync(fx.statePath, "{ not valid json", "utf8");
+  const cap = makeResetCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "reset task",
+      root: fx.root,
+      sessionId: "abc-123",
+      stdout: cap.stream,
+    });
+    assert.equal(result.action, "passthrough");
+    const out = cap.text();
+    assert.ok(out.includes("quarantined the corrupt task.json"), `message: ${out}`);
+    assert.ok(out.includes("started a fresh task"), "reports the fresh task");
+    // task.json is now a fresh valid state (the original was moved to a sidecar).
+    const fresh = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(fresh.workflowGate, "no-lane", "a fresh valid task is in place");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('approval-listener — "reset task" on a VALID state is a safe refusal, never discards it', async () => {
+  const fx = makeFixture({ workflowGate: "impl-started" });
+  const before = readFileSync(fx.statePath, "utf8");
+  const cap = makeResetCapture();
+  try {
+    const result = await handleUserPromptSubmit({
+      prompt: "reset task",
+      root: fx.root,
+      sessionId: "abc-123",
+      stdout: cap.stream,
+    });
+    assert.equal(result.action, "passthrough");
+    const out = cap.text();
+    assert.ok(out.includes("the current task.json is valid"), `message: ${out}`);
+    assert.ok(out.includes("only recovers a CORRUPT state"), "explains reset only recovers corrupt state");
+    assert.ok(out.includes("abandon"), "points to abandon for a valid task");
+    assert.equal(readFileSync(fx.statePath, "utf8"), before, "valid task is untouched");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// ── #198: APPROVE_PLAN advance is a version-checked write (CAS loop) ───────────
+
+test('#198 approval-listener › "approve plan" advance does not clobber a concurrent field write', async () => {
+  // A bug task at plan-approved with a scope.md advances plan-approved →
+  // impl-started on "approve plan". Race a concurrent field write against it: the
+  // CAS loop either reads it in fresh state or retries on conflict, so both the
+  // advance (with currentStep reset) AND the concurrent field survive.
+  const fx = makeFixture({ workflowGate: "plan-approved", lane: "bug", currentStep: 7 });
+  const taskId = JSON.parse(readFileSync(fx.statePath, "utf8")).taskId;
+  const sessionDir = join(fx.root, ".devmate", "session", taskId);
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(
+    join(sessionDir, "scope.md"),
+    ["---", "lane: bug", "---", "# Scope", "", "## Allowed paths", "- src/app.mjs", "", "## Allowed globs", ""].join("\n"),
+    "utf8",
+  );
+  try {
+    // Start the handler, then land the competing write before it commits.
+    const pending = handleUserPromptSubmit({ prompt: "approve plan", root: fx.root });
+    await mutateTaskStateUnderLock((s) => ({ ...s, activeSubagents: 3 }), fx.statePath);
+    const result = await pending;
+
+    assert.equal(result.action, "gate_advanced");
+    assert.equal(result.gate, "impl-started");
+    const after = JSON.parse(readFileSync(fx.statePath, "utf8"));
+    assert.equal(after.workflowGate, "impl-started", "the gate advanced");
+    assert.equal(after.currentStep, 0, "currentStep was reset");
+    assert.equal(after.activeSubagents, 3, "the concurrent field write survived the CAS advance");
+  } finally {
+    fx.cleanup();
+  }
 });

@@ -6,10 +6,37 @@ The runtime pipeline is deterministic and path-safe:
 1. PostToolUse writes facts to `.devmate/memory/tasks/<taskId>.jsonl`.
 2. Completion, compaction, **and normal session end** promote active facts into
    `.devmate/state/repo/repo.jsonl`.
-3. Renderer regenerates `.devmate/MEMORY.md` from the active repo ledger.
+3. Renderer regenerates `.devmate/MEMORY.md` from the active repo ledger,
+   rendering only **semantic discovery facts** (#150) — natural-language repository
+   claims — ordered by confidence, then recency. Bare edit events (`<tool> edited
+   <file>`) stay in the ledger for local recall but are excluded from the committed
+   artifact, so what survives a clone is signal, not tool-edit telemetry.
 
 This keeps task-local staging separate from shared memory while ensuring the
 committed memory file is always generated from current structured state.
+`queryMemory` recall is unchanged by default (edit facts remain queryable); pass
+`opts.kind: 'discovery'` to restrict recall to the semantic facts.
+
+#### Render-on-change only (#149)
+
+The repo ledger (`repo.jsonl`) is git-ignored, so it is **private to each
+developer's checkout**. The renderer runs on every session end / compaction, but
+it now writes `.devmate/MEMORY.md` **only when the rendered bytes differ from
+what is already on disk**. A session that promotes nothing produces identical
+output and skips the write, so the tracked file is never dirtied from one
+developer's local ledger — no churn, no permanently dirty working tree.
+
+#### Fresh-clone recall fallback (#149)
+
+Because the ledger is git-ignored, a fresh checkout has **no scored recall** — but
+the committed `.devmate/MEMORY.md` is present. Single-root `SessionStart` recall
+therefore falls back to the committed file: when (and only when) the ledger file
+is **absent** — distinct from present-but-empty — it injects the committed memory
+as a **bounded** `<devmate-memory>` block (clipped, never an unbounded dump),
+mirroring the multi-root `loadRepoMemories` path. When the ledger exists, recall
+is unchanged (the scored top-N path). This is the same reconciliation
+`memory-refactor-spec.md` chose — `.devmate/MEMORY.md` stays the committed
+artifact; the raw ledger is **not** committed.
 
 ### Capture triggers
 
@@ -64,6 +91,13 @@ renderer emits `memory.render.oversize` (it never clips) so it can be compacted.
 - **`scripts/devmate-doctor.mjs`** (`diagnoseMemory`) health-checks the three
   stages in sequence and names the first that looks broken — the fastest way to
   triage "memory isn't updating".
+- It also raises a **non-blocking** `guardrailUnenforced` notice when a
+  `.devmate/MEMORY.md` is present but no `check-memory` workflow guards it
+  (see [Consumer-repo enforcement](#consumer-repo-enforcement--check-memory-opt-in)) —
+  so trusted-by-convention committed memory is surfaced, never silently assumed
+  safe. Detection is a pure read (the file's presence, not a `git ls-files`
+  subprocess; the seeded `.gitignore` tracks the file, so a present file is
+  committed-by-convention), and it never affects the doctor's exit code.
 - Collection and compaction emit `fact_write` and `compaction` trace events, so
   the pipeline can be reconstructed from `.devmate/state/trace/<taskId>.jsonl`.
 
@@ -126,9 +160,12 @@ non-empty batch. The fact-writer's edit-only PostToolUse policy is unchanged.
   (file, claim), so the same claim re-discovered by a later task hits the
   same key and promotion's `keep-incoming` policy replaces it.
 - **Freshness anchor:** `contentDigest` is the referenced file's 16-hex
-  content digest at write time. Claims flagged `needsReview: true`
-  (unadjudicated conflicts) and claims whose file does not exist are skipped
-  and counted, never written.
+  content digest at write time, computed over **line-ending-normalized** content
+  (#148) — the digest is a function of logical content, not the checkout's CR/LF,
+  so a fact written on an LF checkout is not false-stale on a CRLF checkout of the
+  same commit (`.gitattributes` is `text=auto eol=lf`). Claims flagged
+  `needsReview: true` (unadjudicated conflicts) and claims whose file does not
+  exist are skipped and counted, never written.
 - **Idempotent per task:** a re-run stales the prior discovery batch before
   appending the new one (one lock, one critical section). Edit facts are
   never touched. Promotion (`promoteLedger`) carries discovery facts through
@@ -197,3 +234,79 @@ node scripts/migrate-memory-path.mjs --dry-run
 
 `scripts/check-memory-path-refs.mjs` enforces canonical path usage in source
 and docs, excluding files that must legitimately reference historical paths.
+
+## Consumer-repo enforcement — `check-memory` (opt-in)
+
+devmate ships the memory *pipeline* into a consumer repo by seeding hooks + the
+`.devmate/` layout, but the promotion *guardrails* that make committed memory safe
+at scale are CI, and a plugin cannot add a workflow to someone else's repo (see
+[the enforcement design](design/mem-consumer-enforcement.md)). So a consumer's
+committed `.devmate/MEMORY.md` is trusted-by-convention unless they opt in to the
+bundled guardrail.
+
+`scripts/check-memory.mjs` is that opt-in command. It runs from the repo root and
+structurally validates the committed `.devmate/MEMORY.md`:
+
+- **marker integrity** — the auto-rendered facts block is well-formed (both
+  `<!-- devmate:facts:* -->` sentinels present and in order), so a hand-edit that
+  truncated the block is rejected;
+- **bounds** — the file is within the render soft cap (the same growth signal the
+  renderer surfaces);
+- **best-effort secret scan** — reuses the output boundary's `redactSecrets`
+  (env-var `KEY=value`, `Bearer …`, `Authorization: …` shapes; not a security
+  guarantee). Standalone commit SHAs / content hashes are neutralized first, so
+  the repo knowledge committed memory legitimately carries does not false-positive.
+
+It exits `0` when clean (or when there is no committed memory to check) and `1` on
+any violation.
+
+### The regeneration crux (resolved)
+
+The design doc's first-choice guardrail is to *re-render* `.devmate/MEMORY.md` from
+the ledger and fail on a diff — the check that catches a hand-edit outright. That
+is **not possible on a clone**: the ledger (`.devmate/state/repo/repo.jsonl`) is
+git-ignored and never committed, so there is no committed source to regenerate
+from. v1 therefore degrades — exactly as the design doc anticipated — to the
+structural checks above, which need no private ledger. Deterministic-regeneration
+verify stays a future opt-in for a consumer that *also* commits a ledger source of
+truth. Opt-out is surfaced by `devmate-doctor`, never silently assumed.
+
+### Drop-in workflow
+
+devmate ships through a **private plugin marketplace**, not public npm, so the
+drop-in fetches the tool by checking out the devmate repo at a pinned ref (a
+consumer who installed the plugin already has access to that repo). Copy this into
+`.github/workflows/check-memory.yml`:
+
+```yaml
+name: check-memory
+on:
+  pull_request:
+    paths: ['.devmate/MEMORY.md']
+jobs:
+  check-memory:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. your repo — carries the committed .devmate/MEMORY.md to validate
+      - uses: actions/checkout@v4
+      # 2. the devmate tool, pinned. Checking out a private repo needs a token
+      #    with read access (the default GITHUB_TOKEN cannot read another repo):
+      - uses: actions/checkout@v4
+        with:
+          repository: LP-GTM-Product-Engineering/devmate
+          ref: main                     # pin to a tag/SHA you trust
+          path: .devmate-tool
+          token: ${{ secrets.DEVMATE_RO_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # 3. run with the workspace root (your repo) as cwd, so the check reads
+      #    your .devmate/MEMORY.md while resolving its own lib/ from the tool.
+      - run: node .devmate-tool/scripts/check-memory.mjs
+```
+
+The script takes cwd (the workspace root = your repo) as the repo root, so it
+validates *your* `.devmate/MEMORY.md` while importing its own `lib/` from the
+checked-out `.devmate-tool/`. Branch protection and CODEOWNER routing for
+`.devmate/MEMORY.md` remain the consumer's own `.github/` policy — recommended
+configuration, not something devmate enforces.

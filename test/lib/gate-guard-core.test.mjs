@@ -98,6 +98,37 @@ test("evaluateGuard - impl-started + scope.md present → Rule 6 governs (in-sco
   assert.ok(outScope.reason?.includes("scope.md"), `reason: ${outScope.reason}`);
 });
 
+test("evaluateGuard - #187: an edit that escapes the workspace is denied even when a floor glob would match it", () => {
+  // The always-on test-glob floor matches an OUT-of-workspace path segment by
+  // segment (** consumes the `..` segments), so scope-writing (#170/#180) can't
+  // close this — the enforcement boundary must. The caller resolves the target
+  // against the root and hands `editEscapesWorkspace`.
+  const state = makeState("impl-started");
+  const scope = /** @type {any} */ ({ lane: "feature", allowedPaths: [], allowedGlobs: ["**/*.test.mjs"] });
+  const payload = { tool_name: "create_file", path: "../../etc/pwn.test.mjs" };
+  // Premise: the floor DOES match the escaping path — that is the hole.
+  assert.ok(matchGlob("**/*.test.mjs", "../../etc/pwn.test.mjs"), "premise: the floor matches the escaping path");
+  // Pre-fix behavior (no verdict passed): the floor authorizes the escaping edit.
+  const preFix = evaluateGuard(payload, state, okConfig, { scope });
+  assert.equal(preFix.decision, "allow", "characterizes the hole: absent the verdict, the floor authorizes an escape");
+  // #187: with the containment verdict, Rule 6 denies BEFORE the glob match.
+  const denied = evaluateGuard(payload, state, okConfig, { scope, editEscapesWorkspace: true });
+  assert.equal(denied.decision, "deny");
+  assert.match(String(denied.reason), /OUTSIDE the workspace/i);
+});
+
+test("evaluateGuard - #187: editEscapesWorkspace:false leaves a legitimate in-scope edit allowed", () => {
+  const state = makeState("impl-started");
+  const scope = /** @type {any} */ ({ lane: "feature", allowedPaths: ["src/api/user.mjs"], allowedGlobs: [] });
+  const r = evaluateGuard(
+    { tool_name: "write_file", path: "src/api/user.mjs" },
+    state,
+    okConfig,
+    { scope, editEscapesWorkspace: false },
+  );
+  assert.equal(r.decision, "allow");
+});
+
 // ---- isSourceEditTool ----
 
 test("isSourceEditTool - str_replace_editor is source-edit tool", () => {

@@ -18,6 +18,7 @@ import {
   handleSubagentStop,
 } from "../../hooks/subagent-budget-guard.mjs";
 import { parseJsonl } from "../../lib/json-io.mjs";
+import { mutateTaskStateUnderLock } from "../../lib/task-state.mjs";
 
 /** @typedef {import('../../lib/types.mjs').TaskState} TaskState */
 
@@ -185,6 +186,38 @@ test("subagent-budget-guard — third start at maxConcurrentAgents=3 → allowed
     });
     assert.equal(result.decision, "allowed");
     assert.equal(result.activeCount, 3);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("#189 subagent-budget-guard — two concurrent starts at the ceiling admit EXACTLY one (atomic check-and-increment)", async () => {
+  // Pre-fix (blind read-then-write) both would read activeSubagents=2, both pass
+  // 2<3, both write 3 → BOTH admitted (over-admit). The atomic check-and-increment
+  // must admit exactly one and leave the count at the ceiling.
+  const fx = makeFixture({ state: { activeSubagents: 2 }, maxConcurrentAgents: 3 });
+  try {
+    const [a, b] = await Promise.all([
+      handleSubagentStart({ agentName: "a.agent", persona: "backend", agentId: "id-a", repoRoot: fx.root }),
+      handleSubagentStart({ agentName: "b.agent", persona: "frontend", agentId: "id-b", repoRoot: fx.root }),
+    ]);
+    assert.deepEqual([a.decision, b.decision].sort(), ["allowed", "denied"], "exactly one admitted");
+    assert.equal(readState(fx.statePath).activeSubagents, 3, "count never exceeds the ceiling");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("#189 subagent-budget-guard — a concurrent write to another field is not clobbered by the counter increment", async () => {
+  const fx = makeFixture({ state: { activeSubagents: 0, budget: 10 } });
+  try {
+    await Promise.all([
+      handleSubagentStart({ agentName: "a.agent", persona: "backend", agentId: "id-a", repoRoot: fx.root }),
+      mutateTaskStateUnderLock((s) => ({ ...s, budget: 42 }), fx.statePath),
+    ]);
+    const after = readState(fx.statePath);
+    assert.equal(after.activeSubagents, 1, "the counter increment survived");
+    assert.equal(after.budget, 42, "the concurrent field write survived — not clobbered by a stale-snapshot blind write");
   } finally {
     fx.cleanup();
   }

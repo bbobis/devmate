@@ -1,0 +1,14 @@
+{
+  "tasks": [
+    {
+      "description": "Persist the planner artifact",
+      "ac": ["Plan artifact is persisted to plan.json"],
+      "tddApproach": "node:test unit assertions",
+      "persona": "backend",
+      "files": ["lib/workflow/agents/planner.mjs"]
+    }
+  ],
+  "assumptions": [],
+  "openRisks": [],
+  "unverified": []
+}

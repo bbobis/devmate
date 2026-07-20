@@ -258,7 +258,7 @@ tools: [read/readFile, read/viewImage, search, web/fetch, browser]
 
 ### `diagnose`
 
-**Role:** Bug-lane diagnostician. Reproduces the bug, identifies the root cause, determines the minimal affected scope, and writes a `DiagnosisResult` plus `scope.md`. Hands off to `fullstack` with a bounded edit scope.
+**Role:** Bug-lane diagnostician. Reproduces the bug, identifies the root cause, determines the minimal affected scope, and returns a `DiagnosisResult` whose `allowedPaths` / `allowedGlobs` boundary is persisted by the hook to `scope.md`. Hands off to `fullstack` with a bounded edit scope.
 
 ```yaml
 ---
@@ -275,7 +275,7 @@ handoffs:
 ```
 
 **Input:** Bug report, reproduction steps  
-**Output:** `DiagnosisResult` with `bugScope` (persona-from-config or 'unknown'), `suspectedLayer`, `reproCommand`, `fixerRecommendation`, `taskId`, `schemaVersion` (must equal 1); `scope.md` with `allowedFiles[]`  
+**Output:** `DiagnosisResult` with `bugScope` (persona-from-config or 'unknown'), `suspectedLayer`, `reproCommand`, `fixerRecommendation`, `taskId`, `schemaVersion` (must equal 1), plus the scope boundary fields `allowedPaths[]` and `allowedGlobs[]`; the hook persists those fields to `scope.md`  
 **Disallowed:** Writing a fix, guessing root cause without evidence (must tag `[UNVERIFIED]`)  
 
 ---

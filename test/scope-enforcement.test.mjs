@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { parseScope, validateScope, enforceScope, readScopeForTask } from '../lib/workflow/scope.mjs';
+import { parseScope, validateScope, enforceScope, readScopeForTask, pathEscapesWorkspace } from '../lib/workflow/scope.mjs';
 import { evaluateGuard } from '../lib/gate-guard-core.mjs';
 
 /** @typedef {import('../lib/types.mjs').ParsedScope} ParsedScope */
@@ -446,4 +446,24 @@ test('regression — enforceBugScope is no longer exported from bug-handoff', as
     false,
     'enforceBugScope must not be exported from lib/workflow/bug-handoff.mjs',
   );
+});
+
+// ── #187: pathEscapesWorkspace — the enforcement-side edit-path containment ──
+
+// Forward-slash roots (resolve() normalizes them to the platform form) sidestep
+// backslash-literal fragility; String.raw carries the one backslash path verbatim.
+const WS_ROOT = process.platform === 'win32' ? 'C:/ws/root' : '/ws/root';
+
+test('#187 pathEscapesWorkspace — escapes for a `..` traversal and for an absolute path elsewhere', () => {
+  assert.equal(pathEscapesWorkspace(WS_ROOT, '../../etc/passwd'), true, 'a `..` rising above the root escapes');
+  assert.equal(pathEscapesWorkspace(WS_ROOT, String.raw`..\..\etc\passwd`), true, 'a backslash `..` escapes cross-platform');
+  const absElsewhere = process.platform === 'win32' ? 'D:/other/pwn' : '/etc/passwd';
+  assert.equal(pathEscapesWorkspace(WS_ROOT, absElsewhere), true, 'an absolute path pointing elsewhere escapes');
+});
+
+test('#187 pathEscapesWorkspace — contained for in-workspace paths, incl. an inside-staying `..` and an absolute IN-workspace path', () => {
+  assert.equal(pathEscapesWorkspace(WS_ROOT, 'repo-a/lib/x.mjs'), false, 'workspace-relative (multi-root) is contained');
+  assert.equal(pathEscapesWorkspace(WS_ROOT, 'sub/../lib/x.mjs'), false, 'a `..` that stays inside is NOT a naive-substring reject');
+  assert.equal(pathEscapesWorkspace(WS_ROOT, `${WS_ROOT}/lib/x.mjs`), false, 'an absolute path INSIDE the workspace is allowed (needs the real root to tell)');
+  assert.equal(pathEscapesWorkspace(WS_ROOT, ''), false, 'an empty path is not an escape');
 });

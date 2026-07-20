@@ -17,7 +17,7 @@ commands or globs.
 
 1. **Generate** — `node "${PLUGIN_ROOT}/scripts/init.mjs" --infer` writes a deterministic
    floor (`.devmate/state/init-proposal.json`) + scanned evidence (`init-evidence.json`).
-   Read both; the script is the single source of truth.
+   Read both; the script is truth. `${PLUGIN_ROOT}` = the "Bundled scripts root" in `<devmate-skills>` — substitute it.
 2. **Enrich** — from the evidence, select/label checks and tighten personas/globs to
    this codebase. Only select and label — never invent; tag ungrounded items
    `source: "[UNVERIFIED]"`. Edit the proposal in place.

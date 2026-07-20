@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { assertNodeVersion, isMainModule } from "../lib/env-guard.mjs";
 import { resolveHookRoot } from "../lib/init/repo-root.mjs";
+import { isDevmatePayload } from "../lib/hooks/session-marker.mjs";
 import { pathExists, readTextFileSync, statPathSync } from '../lib/fs-safe.mjs';
 import { loadDevmateConfig, resolvePersonaScopeMode } from '../lib/config/devmate-config.mjs';
 import { assertPersonaScope } from '../lib/workflow/orchestrator.mjs';
@@ -14,7 +15,7 @@ import { persistWorkerReturn } from '../lib/workflow/persist-worker-return.mjs';
 import { writeFact } from "../lib/memory/fact-writer.mjs";
 import { taskLedgerPath, validateTaskId } from '../lib/memory/paths.mjs';
 import { getOwn } from '../lib/object-utils.mjs';
-import { readTaskState, writeTaskState } from '../lib/task-state.mjs';
+import { mutateTaskStateUnderLock, readTaskState } from '../lib/task-state.mjs';
 import { auditAction } from "../lib/trace/audit-action.mjs";
 import { appendTraceEvent } from "../lib/trace/append.mjs";
 import { createPack, addPointer, BudgetExceededError } from '../lib/context/evidence-pack.mjs';
@@ -91,6 +92,11 @@ export async function runWithIO(stdin, stdout, stderr) {
     stderr.write(`[post-tool-use] malformed stdin JSON: ${msg}\n`);
     return 1;
   }
+
+  // Runtime scope: plugin-level hooks fire in EVERY Copilot session. Act only
+  // inside a marked devmate session (lib/hooks/session-marker.mjs); otherwise
+  // exit silently — no fact writes, no worker-return persistence, no state.
+  if (!isDevmatePayload(payload)) return 0;
 
   // Anchor on the workspace root even if the hook's cwd is the workspace's own
   // .devmate/ folder (or a directory below the root): resolveHookRoot climbs
@@ -705,14 +711,6 @@ async function recordReadPointer(payload, state, statePath, workspaceRoot, stder
       // keep the fallback
     }
 
-    const maxSources = state.outputContract?.max_context_sources ?? 10;
-    const pack =
-      state.evidencePack ??
-      createPack({ taskId: state.taskId, stage: state.workflowGate, maxSources });
-
-    // Skip duplicates: one pointer per (path, whole-file) read.
-    if (pack.pointers.some((p) => p.path === filePath && p.lineRange === null)) return;
-
     /** @type {import('../lib/types.mjs').EvidencePointer} */
     const pointer = {
       path: filePath,
@@ -723,20 +721,34 @@ async function recordReadPointer(payload, state, statePath, workspaceRoot, stder
       kind: 'file',
     };
 
-    /** @type {import('../lib/types.mjs').EvidencePack} */
-    let nextPack;
-    try {
-      nextPack = addPointer(pack, pointer);
-    } catch (/** @type {unknown} */ err) {
-      if (err instanceof BudgetExceededError) {
-        // TODO: confirm cap policy after E9-21 budget evals — provisional
-        // (current policy: stop appending at max_context_sources).
-        return;
-      }
-      throw err;
+    // #189: dedup + append + budget-cap are all recomputed against the FRESH
+    // in-lock pack, so a concurrent evidence append is not lost (the field is no
+    // longer last-writer-wins from a stale snapshot) and a gate advance is not
+    // clobbered. A duplicate or a budget-cap hit returns null (no write); a real
+    // failure surfaces as a non-throwing { ok: false } logged below.
+    const outcome = await mutateTaskStateUnderLock(
+      (fresh) => {
+        const maxSources = fresh.outputContract?.max_context_sources ?? 10;
+        const pack =
+          fresh.evidencePack ??
+          createPack({ taskId: fresh.taskId, stage: fresh.workflowGate, maxSources });
+        // Skip duplicates: one pointer per (path, whole-file) read.
+        if (pack.pointers.some((p) => p.path === filePath && p.lineRange === null)) return null;
+        try {
+          return { ...fresh, evidencePack: addPointer(pack, pointer) };
+        } catch (/** @type {unknown} */ err) {
+          // TODO: confirm cap policy after E9-21 budget evals — provisional
+          // (current policy: stop appending at max_context_sources).
+          if (err instanceof BudgetExceededError) return null;
+          throw err;
+        }
+      },
+      statePath,
+      { event: 'evidence-pointer' },
+    );
+    if (!outcome.ok) {
+      stderr.write(`[post-tool-use] evidence pointer skipped (non-fatal): ${outcome.error}\n`);
     }
-
-    await writeTaskState({ ...state, evidencePack: nextPack }, statePath);
   } catch (/** @type {unknown} */ err) {
     const msg = err instanceof Error ? err.message : String(err);
     stderr.write(`[post-tool-use] evidence pointer skipped (non-fatal): ${msg}\n`);

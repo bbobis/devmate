@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, existsSync, rmSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
-import { runWithIO } from '../../scripts/session-start.mjs';
+import { runWithIO, emitMemoryContext } from '../../scripts/session-start.mjs';
 import { STATE_DIRS as _STATE_DIRS } from '../../lib/init/layout.mjs';
-import { MEMORY_PATH as _MEMORY_PATH } from '../../lib/memory/paths.mjs';
+import { MEMORY_PATH as _MEMORY_PATH, repoLedgerPath } from '../../lib/memory/paths.mjs';
 
 /**
  * Build a readable stream wrapping a string for stdin-style use.
@@ -587,6 +587,177 @@ test('session-start — single-root: no <devmate-memory> block when the repo led
       !stdout.get().includes('<devmate-memory>'),
       'must not inject an empty memory block',
     );
+  } finally {
+    cleanup();
+  }
+});
+
+// ── #171: SessionStart surfaces a corrupt task.json via the unreadable-state anchor ──
+
+test('session-start — an invalid (lane, gate) task.json surfaces the #129 diagnostic at session start (#171)', async () => {
+  const { root, cleanup } = makeRoot();
+  const stdout = collectingWritable();
+  const stderr = collectingWritable();
+  try {
+    seedValidEnvironment(root);
+    // A valid-JSON, valid-enum state whose (lane, gate) PAIR is illegal — the
+    // #129 hand-edited corruption. Seeded before the SessionStart runs.
+    mkdirSync(join(root, '.devmate', 'state'), { recursive: true });
+    writeFileSync(
+      join(root, '.devmate', 'state', 'task.json'),
+      JSON.stringify({
+        taskId: 't-171',
+        lane: 'bug',
+        workflowGate: 'discovery-done',
+        artifactHashes: {},
+        preImplStash: null,
+        currentStep: 0,
+        budget: 10,
+        schemaVersion: 1,
+      }),
+      'utf8',
+    );
+    const payload = JSON.stringify({ hook_event_name: 'SessionStart', cwd: root });
+    const code = await runWithIO(stringReadable(payload), stdout.stream, stderr.stream);
+
+    assert.equal(code, 0, `session start must not crash on a corrupt state; stderr: ${stderr.get()}`);
+    const out = stdout.get();
+    assert.match(out, /state: unreadable/, '#171 — the unreadable-state anchor is emitted');
+    assert.match(out, /has no transitions defined for lane "bug"/, '#171 — the #129 diagnostic reaches the model');
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #149 — single-root fresh-clone memory recall fallback.
+
+/**
+ * @param {{ source: string, summary: string, ts?: number }} f
+ * @returns {string}
+ */
+function ledgerFactLine(f) {
+  return `${JSON.stringify({
+    event: 'fact',
+    key: `${f.source}:${f.ts ?? 1}`,
+    source: f.source,
+    tool: 'discovery-merge',
+    lane: 'feature',
+    tags: [],
+    summary: f.summary,
+    confidence: 0.9,
+    ts: f.ts ?? 1,
+    stepId: '1',
+    firstEdit: true,
+    taskId: 'task-1',
+  })}\n`;
+}
+
+test('#149 emitMemoryContext: a fresh clone (ledger absent, MEMORY.md present) injects a bounded committed-memory block', async () => {
+  const { root, cleanup } = makeRoot();
+  try {
+    // A cold checkout: the committed memory file is present, but the git-ignored
+    // ledger never landed. No .devmate/state/repo/repo.jsonl exists.
+    mkdirSync(join(root, '.devmate'), { recursive: true });
+    writeFileSync(
+      resolve(root, _MEMORY_PATH),
+      [
+        '# Memory',
+        '',
+        '<!-- devmate:facts:start -->',
+        '## lib/auth.mjs',
+        '- uses JWT RS256 (task: t1, added: 2026-01-01T00:00:00.000Z)',
+        '<!-- devmate:facts:end -->',
+      ].join('\n'),
+      'utf8',
+    );
+    assert.equal(existsSync(repoLedgerPath(root)), false, 'precondition: ledger absent');
+
+    const out = collectingWritable();
+    const err = collectingWritable();
+    await emitMemoryContext(root, out.stream, err.stream);
+
+    const text = out.get();
+    assert.match(text, /<devmate-memory>/, 'a recall block is injected on a cold clone');
+    assert.match(text, /fresh checkout/, 'the fallback header identifies the committed-memory source');
+    assert.match(text, /uses JWT RS256/, 'the committed fact reaches the model');
+  } finally {
+    cleanup();
+  }
+});
+
+test('#149 emitMemoryContext: when the ledger EXISTS, the scored path is used and the fallback is NOT taken', async () => {
+  const { root, cleanup } = makeRoot();
+  try {
+    // The fact's source must resolve to live code (verify-before-use), so create it.
+    mkdirSync(join(root, 'lib'), { recursive: true });
+    writeFileSync(join(root, 'lib', 'x.mjs'), '// x\n', 'utf8');
+    mkdirSync(dirname(repoLedgerPath(root)), { recursive: true });
+    writeFileSync(repoLedgerPath(root), ledgerFactLine({ source: 'lib/x.mjs', summary: 'x does a thing' }), 'utf8');
+    // A committed MEMORY.md ALSO exists — the fallback must NOT win over the ledger.
+    mkdirSync(join(root, '.devmate'), { recursive: true });
+    writeFileSync(
+      resolve(root, _MEMORY_PATH),
+      '# Memory\n\n<!-- devmate:facts:start -->\n## other.mjs\n- fresh checkout marker text\n<!-- devmate:facts:end -->\n',
+      'utf8',
+    );
+
+    const out = collectingWritable();
+    const err = collectingWritable();
+    await emitMemoryContext(root, out.stream, err.stream);
+
+    const text = out.get();
+    assert.match(text, /Recalled facts/, 'the scored recall header is used when the ledger exists');
+    assert.match(text, /x does a thing/, 'the scored fact is injected');
+    assert.doesNotMatch(text, /fresh checkout/, 'the committed-memory fallback is NOT taken when the ledger exists');
+  } finally {
+    cleanup();
+  }
+});
+
+test('#149 emitMemoryContext: a present-but-empty ledger injects nothing (empty is distinct from absent)', async () => {
+  const { root, cleanup } = makeRoot();
+  try {
+    // Ledger file exists but has no facts — a legitimate "nothing yet" state, NOT
+    // a fresh clone. The fallback must not fire.
+    mkdirSync(dirname(repoLedgerPath(root)), { recursive: true });
+    writeFileSync(repoLedgerPath(root), '', 'utf8');
+    mkdirSync(join(root, '.devmate'), { recursive: true });
+    writeFileSync(
+      resolve(root, _MEMORY_PATH),
+      '# Memory\n\n<!-- devmate:facts:start -->\n## a.mjs\n- committed note\n<!-- devmate:facts:end -->\n',
+      'utf8',
+    );
+
+    const out = collectingWritable();
+    const err = collectingWritable();
+    await emitMemoryContext(root, out.stream, err.stream);
+
+    assert.equal(out.get(), '', 'a present-but-empty ledger yields no recall block');
+  } finally {
+    cleanup();
+  }
+});
+
+test('#149 emitMemoryContext: the fresh-clone fallback is bounded — a large MEMORY.md is clipped, never dumped whole', async () => {
+  const { root, cleanup } = makeRoot();
+  try {
+    mkdirSync(join(root, '.devmate'), { recursive: true });
+    /** @type {string[]} */
+    const lines = ['# Memory', '', '<!-- devmate:facts:start -->'];
+    for (let i = 0; i < 120; i += 1) lines.push(`- fact ${i}`);
+    lines.push('<!-- devmate:facts:end -->');
+    writeFileSync(resolve(root, _MEMORY_PATH), lines.join('\n'), 'utf8');
+
+    const out = collectingWritable();
+    const err = collectingWritable();
+    await emitMemoryContext(root, out.stream, err.stream);
+
+    const text = out.get();
+    assert.match(text, /<devmate-memory>/);
+    assert.match(text, /more line\(s\) in the committed memory file/, 'the block is clipped with a truncation marker');
+    // The injected block is far smaller than the source file.
+    assert.ok(text.split('\n').length < 120, 'the injected block is bounded, not the whole file');
   } finally {
     cleanup();
   }

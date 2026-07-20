@@ -86,6 +86,18 @@ level. The devmate-orchestrator uses them to validate dispatch results.
   changed. This list is load-bearing: it is checked at completion against the
   dispatched persona's edit boundary (a file owned by a different persona, or on
   your `offLimitsGlobs`, fails the dispatch), so it must be complete and accurate.
+  **Every entry is a bare path string — never an object.** Wrapping a path in a
+  richer shape (e.g. `{ "path": "...", "reason": "..." }`) does not fail loud:
+  the host silently drops any non-string entry before running the boundary
+  check, so a wrapped path is treated as a file that was never touched at all.
+  That makes the territory check pass even when the dispatch actually edited
+  outside its persona — the opposite of what the boundary exists to catch.
+  ```json
+  // ❌ silently dropped — treated as "no file changed" for the boundary check
+  { "changedFiles": [{ "path": "src/ui/Widget.tsx" }] }
+  // ✅
+  { "changedFiles": ["src/ui/Widget.tsx"] }
+  ```
 - `payload.completedAcIds` (`number[]`) — the global acceptance-criterion ids
   (matching `AC{n}` in `spec.md`) whose mapped test reached GREEN in this
   dispatch. **Required whenever your dispatch payload has a "Target acceptance

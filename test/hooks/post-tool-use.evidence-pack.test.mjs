@@ -11,6 +11,13 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { runWithIO } from '../../hooks/post-tool-use.mjs';
 
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-evidence-pack');
+
 /**
  * @param {{ maxSources?: number, evidencePack?: unknown }} [opts]
  * @returns {Promise<{ root: string, statePath: string }>}
@@ -64,6 +71,7 @@ async function runHook(root, toolName, filePath) {
   // the payloads a user's VS Code actually delivers.
   const payload = {
     hook_event_name: 'PostToolUse',
+    session_id: TEST_SESSION_ID,
     tool_name: toolName,
     cwd: root,
     tool_input: { filePath },

@@ -13,13 +13,14 @@ import { fallbackReposOf, formatFallbackNudge } from '../lib/init/multi-root-ini
 import { assertDevmateReady } from '../lib/startup.mjs';
 import { MEMORY_PATH, repoLedgerPath } from '../lib/memory/paths.mjs';
 import { queryMemory } from '../lib/memory/query.mjs';
-import { buildMemoryContext } from '../lib/memory/memory-context.mjs';
+import { buildMemoryContext, buildMemoryFallbackContext } from '../lib/memory/memory-context.mjs';
 import { buildResumePlan } from '../lib/resume/plan.mjs';
 import { reconcileActiveSubagents } from '../lib/resume/reconcile-subagents.mjs';
 import { bootstrapTaskState } from '../lib/workflow/bootstrap-task-state.mjs';
 import { writeResult } from '../lib/output/write-result.mjs';
-import { readTaskState, writeTaskState, STATE_PATH } from '../lib/task-state.mjs';
-import { buildStateAnchor } from '../lib/orchestrator/state-anchor.mjs';
+import { isStateFileMissing, readTaskState, writeTaskState, STATE_PATH } from '../lib/task-state.mjs';
+import { buildStateAnchor, buildUnreadableStateAnchor } from '../lib/orchestrator/state-anchor.mjs';
+import { checkGateConsistency } from '../lib/gate-consistency.mjs';
 import { readTrace } from '../lib/trace/read-trace.mjs';
 import { appendTraceEvent } from '../lib/trace/append.mjs';
 import { completedAcNumbers, summarizeImplProgress } from '../lib/spec-progress.mjs';
@@ -486,8 +487,9 @@ async function emitResumePlan(repoRoot, stdout, stderr) {
  * E10-02: emit the model-visible `<devmate-state>` anchor block (current
  * gate, lane, step, legal next transitions) read from the durable task state,
  * mirroring what the UserPromptSubmit hook prints on every prompt. Fresh
- * sessions (no task state) and invalid state files emit nothing; a failure
- * never blocks the session.
+ * sessions (no task state) emit nothing; an invalid/unreadable state file emits
+ * the unreadable-state anchor with the validateTaskState diagnostic (#171); a
+ * failure never blocks the session.
  * @param {string} repoRoot
  * @param {NodeJS.WritableStream} stdout
  * @param {NodeJS.WritableStream} stderr
@@ -496,11 +498,30 @@ async function emitResumePlan(repoRoot, stdout, stderr) {
 async function emitStateAnchorBlock(repoRoot, stdout, stderr) {
   try {
     const result = readTaskState(resolve(repoRoot, STATE_PATH));
-    if (!result.ok) return;
+    if (!result.ok) {
+      // #171: a missing state file is a legit fresh session (silent no-op); an
+      // invalid/unreadable one (the #129 hand-edited (lane, gate) case, or
+      // malformed JSON) surfaces the diagnostic VERBATIM to the model at session
+      // start, rather than conflating corruption with "no task yet".
+      if (!isStateFileMissing(result)) {
+        stdout.write(`${buildUnreadableStateAnchor(result.errors)}\n`);
+      }
+      return;
+    }
     const state = result.state;
-    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness }} */
+    /** @type {{ implProgress?: import('../lib/types.mjs').ImplProgress, staleness?: import('../lib/task-staleness.mjs').Staleness, consistency?: import('../lib/gate-consistency.mjs').GateConsistencyResult }} */
     const anchorOpts = {};
     anchorOpts.staleness = computeTaskStaleness(repoRoot, state.workflowGate);
+    // Gate-evidence consistency: a hand-edited task.json, a forged approval, or
+    // a state/trace divergence surfaces as a one-line `state: desynced` field so
+    // the model re-anchors to the last evidence-backed gate. Best-effort — a
+    // failure here must never block the anchor from being emitted.
+    try {
+      const consistency = await checkGateConsistency(state, { root: repoRoot });
+      if (!consistency.ok) anchorOpts.consistency = consistency;
+    } catch (/** @type {unknown} */ err) {
+      stderr.write(`[session-start] gate consistency skipped (non-fatal): ${errMsg(err)}\n`);
+    }
     // During implementation, join the trace with the persisted AC list so the
     // anchor shows which acceptance criteria remain, not just the gate.
     if (state.workflowGate === 'impl-started') {
@@ -526,8 +547,14 @@ async function emitStateAnchorBlock(repoRoot, stdout, stderr) {
 /**
  * Single-root recall: query the repo ledger for the top-N most relevant facts
  * and emit a compact, model-visible `<devmate-memory>` block so the agent
- * starts with prior knowledge instead of re-inferring it. Emits nothing when
- * the ledger is missing/empty. Best-effort — never blocks the session.
+ * starts with prior knowledge instead of re-inferring it.
+ *
+ * Fresh-clone fallback (#149): the structured ledger is git-ignored, so a fresh
+ * checkout has no scored recall. When (and only when) the ledger file is ABSENT
+ * — distinct from present-but-empty — inject the committed memory file as a
+ * bounded recall block, mirroring the multi-root `loadRepoMemories` path. With
+ * the ledger present, recall is unchanged (no regression to the scored top-N).
+ * Best-effort — never blocks the session.
  * @param {string} repoRoot
  * @param {NodeJS.WritableStream} stdout
  * @param {NodeJS.WritableStream} stderr
@@ -535,8 +562,9 @@ async function emitStateAnchorBlock(repoRoot, stdout, stderr) {
  */
 export async function emitMemoryContext(repoRoot, stdout, stderr) {
   try {
+    const ledgerPath = repoLedgerPath(repoRoot);
     const result = await queryMemory(
-      repoLedgerPath(repoRoot),
+      ledgerPath,
       { topN: MEMORY_INJECT_TOP_N },
       // Verify-before-use: only inject facts whose source still resolves to
       // live code, so startup recall never points at moved/deleted files.
@@ -544,6 +572,22 @@ export async function emitMemoryContext(repoRoot, stdout, stderr) {
     );
     if (result.ok && result.matches.length > 0) {
       const block = buildMemoryContext(result.matches);
+      if (block !== '') stdout.write(`${block}\n`);
+      return;
+    }
+    // No scored recall. Only fall back to the committed memory file when the
+    // ledger is genuinely ABSENT (a fresh clone) — not when it exists but is
+    // empty, which is a legitimate "nothing to recall yet" state.
+    if (!pathExists(ledgerPath)) {
+      /** @type {string} */
+      let memoryMd;
+      try {
+        memoryMd = readTextFileSync(resolve(repoRoot, MEMORY_PATH));
+      } catch {
+        // No committed memory file either — nothing to inject on a cold clone.
+        return;
+      }
+      const block = buildMemoryFallbackContext(memoryMd);
       if (block !== '') stdout.write(`${block}\n`);
     }
   } catch (/** @type {unknown} */ err) {

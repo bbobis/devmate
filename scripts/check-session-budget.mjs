@@ -26,6 +26,7 @@ import {
   writeHookOutput,
 } from "../lib/hooks/output-schema.mjs";
 import { resolveHookRoot } from "../lib/init/repo-root.mjs";
+import { isDevmatePayload } from "../lib/hooks/session-marker.mjs";
 
 /** TaskState path, relative to the resolved workspace root. */
 const DEFAULT_TASK_STATE = ".devmate/state/task.json";
@@ -142,6 +143,14 @@ export async function main(args, opts = {}) {
   // A CLI/test invocation must never block waiting on a stream nobody will close;
   // those callers inject the tool result through `opts.toolResponse` instead.
   const payload = args[0] ? {} : await readHookPayload(process.stdin);
+
+  // Runtime scope (hook-shaped invocation only — an explicit path arg is an
+  // intentional CLI/test run and stays ungated): plugin-level hooks fire in
+  // EVERY Copilot session, and this one used to inject a [BUDGET:unclassified]
+  // line into every non-devmate session's context. Act only inside a marked
+  // devmate session (lib/hooks/session-marker.mjs).
+  if (!args[0] && !isDevmatePayload(payload)) return 0;
+
   const repoRoot = opts.repoRoot ?? (args[0] ? null : resolveHookRoot(payload));
   const taskStatePath = args[0]
     ? args[0]

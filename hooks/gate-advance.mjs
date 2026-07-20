@@ -44,12 +44,24 @@
 import path from 'node:path';
 import { assertNodeVersion, isMainModule } from '../lib/env-guard.mjs';
 import { resolveHookRoot } from '../lib/init/repo-root.mjs';
+import { isDevmatePayload } from '../lib/hooks/session-marker.mjs';
 import { loadDevmateConfig } from '../lib/config/devmate-config.mjs';
 import { getOwn } from '../lib/object-utils.mjs';
 import { extractAgentResult } from '../lib/hooks/agent-result.mjs';
 import { createTextCapture, EXIT_BLOCK, writeHookOutput } from '../lib/hooks/output-schema.mjs';
 import { resolveAgentName } from '../lib/hooks/subagent-index.mjs';
-import { readTaskState, STATE_PATH, writeTaskState } from '../lib/task-state.mjs';
+import { mutateTaskStateUnderLock, readTaskState, STATE_PATH, stateVersionOf } from '../lib/task-state.mjs';
+// TEST-ONLY seam in the production import graph — justified (#8, review L7):
+// there is no build step to strip a test import, so the seam ships. Its cost when
+// unarmed is a single frozen-Set lookup, it writes nothing and reads only the
+// injected env, and it can throw only its own InjectedFaultError. Two compensating
+// controls make it impossible to trip in production: `armedFaultFor` fails closed
+// unless the env literally names a known site AND mode, and
+// `test/lib/testing/no-production-fault.test.mjs` fails CI if any file under
+// lib/hooks/scripts ever NAMES (let alone sets) the arming variable. This call
+// site passes only the literal site string, never the env var.
+import { injectFaultIfArmed } from '../lib/testing/fault-injection.mjs';
+import { forceConflictIfArmed } from '../lib/testing/cas-conflict-seam.mjs';
 import { appendTraceEvent } from '../lib/trace/append.mjs';
 import { artifactsFor } from '../lib/workflow/agent-contracts.mjs';
 import { persistWorkerReturn } from '../lib/workflow/persist-worker-return.mjs';
@@ -67,11 +79,37 @@ import {
 /** Trace schema version this hook emits. */
 const SCHEMA_VERSION = 1;
 
+/**
+ * #198: bounded retries for the gate-advance compare-and-set. A conflict means a
+ * sibling hook committed between our fresh read and our write; recompute against
+ * the newer state. Small because advancement is a pure function of disk — a later
+ * hook invocation catches up anyway if every attempt loses the race.
+ * @type {number}
+ */
+const GATE_ADVANCE_CAS_ATTEMPTS = 3;
+
 /** Step id stamped on every trace event written by this hook. */
 const STEP_ID = 'gate-advance';
 
 /** Actor recorded on the gate transitions this hook makes. */
 const HOOK_ACTOR = 'hook-evidence';
+
+/**
+ * Model-visible catch-up guidance emitted (as exit-0 `additionalContext`) when
+ * gate advancement throws mid-turn (#8). The raw error — message and stack —
+ * goes to stderr for the human Output panel ONLY; the model gets this generic,
+ * actionable text with no stack, path, or internal detail. Advancement is a pure
+ * function of on-disk artifacts and state is persisted before the gate walk, so
+ * the next PostToolUse re-reads disk and catches the gate up automatically; this
+ * message tells the model that, so a recoverable stall does not read as a clean,
+ * successful, no-op turn (the original silent-stall shape).
+ */
+const GATE_ADVANCE_RECOVERY_TEXT =
+  '[devmate] gate advancement hit a recoverable error this turn and was skipped; ' +
+  'on-disk state is unchanged (no gate half-moved). The next tool call re-reads ' +
+  'the artifacts and catches the gate up automatically — if the gate still looks ' +
+  'stuck after the next step, re-run the last action. Diagnostic detail is in the ' +
+  'devmate Output panel.';
 
 /**
  * The internal event the handler consumes — derived, never the wire payload.
@@ -94,6 +132,7 @@ const HOOK_ACTOR = 'hook-evidence';
  * @property {string|null} artifact    Canonical artifact projected this call, if any.
  * @property {string|null} blockedBy   The precondition that stopped the walk (the evidence boundary).
  * @property {string|null} alert       A dispatch produced no evidence — text the MODEL must be shown (exit 2).
+ * @property {boolean} stateWritten    True iff task state was persisted to disk this invocation.
  */
 
 /**
@@ -232,12 +271,19 @@ export async function handlePostToolUse(event, opts = {}) {
   if (!stateResult.ok) {
     // No task yet (the pre-task window: chat/help before SessionStart bootstraps
     // state). Nothing to advance, and creating state here is not this hook's job.
-    return { action: 'no_action', moves: [], artifact: null, blockedBy: null, alert: null };
+    return { action: 'no_action', moves: [], artifact: null, blockedBy: null, alert: null, stateWritten: false };
   }
 
   /** @type {TaskState} */
   let state = stateResult.state;
-  let dirty = false;
+  // #198: the lane the projection resolved (if it changed), captured so the CAS
+  // loop below can re-apply it onto the FRESH state rather than persisting a
+  // stale snapshot. The projection's other effects (artifact/trace writes) are
+  // idempotent by tool_use_id and run once, above.
+  /** @type {import('../lib/types.mjs').Lane|null} */
+  let projectedLane = null;
+  /** @type {boolean} */
+  let stateWritten = false;
   /** @type {string|null} */
   let artifact = null;
 
@@ -315,8 +361,8 @@ export async function handlePostToolUse(event, opts = {}) {
         // state carries a PLACEHOLDER lane ('feature'), so advancing before this
         // write would walk a bug task down the feature chain.
         if (projected.lane !== null && projected.lane !== state.lane) {
+          projectedLane = projected.lane;
           state = /** @type {TaskState} */ ({ ...state, lane: projected.lane });
-          dirty = true;
         }
         // Report a reason whenever there IS one — not only when nothing was
         // written. A projection can half-succeed: the planner's plan.json lands
@@ -376,35 +422,109 @@ export async function handlePostToolUse(event, opts = {}) {
     }
   }
 
-  // 2. Stamp the spec digest whenever a spec is on disk. Keyed on the file, not
-  //    on the tool call that wrote it, so a spec written by any means still gets
-  //    its metadata — spec-writer holds only an `edit` tool and cannot hash.
-  const stamped = await stampSpecDigest(repoRoot, state);
-  if (stamped !== null) {
-    state = stamped;
-    dirty = true;
+  // TEST-ONLY seam (#8): fault the hook AFTER step 1 has written the artifact to
+  // disk but BEFORE the gate advances, so the injection suite can prove the gate
+  // never half-moves and the next invocation catches up. Inert unless the seam's
+  // env var is armed for this site — one Set lookup in production. See
+  // lib/testing/fault-injection.mjs.
+  injectFaultIfArmed('gate-advance');
+
+  // 2 + 3 (#198): stamp the spec digest, project the lane, and walk the lane chain
+  // — all against the FRESH state — then commit the result with a version pin, so
+  // this evidence-driven advance can no longer clobber (or be clobbered by) a
+  // concurrent write (a subagent counter, an evidence append). On a version
+  // conflict, re-read fresh and recompute: stampSpecDigest and advanceAlongLane
+  // are pure reads of the spec/evidence on disk, safe to re-run.
+  /** @type {Awaited<ReturnType<typeof advanceAlongLane>> | null} */
+  let committed = null;
+  for (let attempt = 0; attempt < GATE_ADVANCE_CAS_ATTEMPTS; attempt += 1) {
+    const freshResult = readTaskState(statePath);
+    if (!freshResult.ok) {
+      // The task vanished/became unreadable between the top read and here — nothing
+      // to advance (same bail as the missing-state check at the top of the hook).
+      return { action: 'no_action', moves: [], artifact, blockedBy: null, alert, stateWritten: false };
+    }
+    const version = stateVersionOf(freshResult.state);
+
+    // TEST-ONLY seam (#202): force this attempt's commit to lose a version race, so
+    // the `conflict → continue` retry branch (and, after N, the exhaustion path) is
+    // covered deterministically. Inert unless armed for this site — one env read in
+    // production. See lib/testing/cas-conflict-seam.mjs.
+    await forceConflictIfArmed('gate-advance', statePath);
+
+    // Re-derive the pre-advance base from fresh: the router-resolved lane, then the
+    // spec-digest stamp (keyed on the file, so a spec written by any means gets its
+    // metadata — spec-writer holds only an `edit` tool and cannot hash).
+    let base = freshResult.state;
+    if (projectedLane !== null && projectedLane !== base.lane) {
+      base = /** @type {TaskState} */ ({ ...base, lane: projectedLane });
+    }
+    const stamped = await stampSpecDigest(repoRoot, base);
+    if (stamped !== null) base = stamped;
+    const baseChanged = base !== freshResult.state;
+
+    const advanced = await advanceAlongLane(base, {
+      stateDir: path.join(repoRoot, STATE_DIR),
+    });
+
+    if (advanced.moves.length === 0) {
+      // No gate move: persist only the pre-advance base (lane/digest), and only if
+      // it changed something.
+      if (baseChanged) {
+        const r = await mutateTaskStateUnderLock(() => base, statePath, {
+          expectedVersion: version,
+          event: 'gate-advance',
+        });
+        if (!r.ok) {
+          if ('conflict' in r && r.conflict) continue; // stale — retry
+          // A real write failure (lock/IO/validation): the old writeTaskState threw.
+          throw new Error(`gate-advance: state write failed: ${r.error}`);
+        }
+        stateWritten = r.written;
+      }
+      return { action: 'no_action', moves: [], artifact, blockedBy: advanced.blockedBy, alert, stateWritten };
+    }
+
+    const r = await mutateTaskStateUnderLock(() => advanced.state, statePath, {
+      expectedVersion: version,
+      event: 'gate-advance',
+    });
+    if (!r.ok) {
+      if ('conflict' in r && r.conflict) continue; // stale — retry
+      // A real write failure: surface it (the old writeTaskState threw here), so a
+      // half-moved gate never appears and the trace below never records the move.
+      throw new Error(`gate-advance: state write failed: ${r.error}`);
+    }
+    stateWritten = r.written;
+    committed = advanced;
+    break;
   }
 
-  // 3. Walk the lane's chain as far as the evidence on disk allows.
-  const advanced = await advanceAlongLane(state, {
-    stateDir: path.join(repoRoot, STATE_DIR),
-  });
-
-  if (advanced.moves.length === 0) {
-    if (dirty) await writeTaskState(state, statePath);
-    return {
-      action: 'no_action',
-      moves: [],
-      artifact,
-      blockedBy: advanced.blockedBy,
-      alert,
-    };
+  if (committed === null) {
+    // Bounded retries exhausted on a persistent conflict — bail without moving the
+    // gate; a later invocation catches up (advancement is a pure function of disk).
+    return { action: 'no_action', moves: [], artifact, blockedBy: null, alert, stateWritten };
   }
+  const advanced = committed;
 
-  await writeTaskState(advanced.state, statePath);
-
+  // The gate is now persisted. Trace recording is a scoped best-effort per move:
+  // a lost audit line must never propagate to main()'s catch and mask a gate that
+  // actually moved as a "recoverable crash". Each failure is loud on stderr with a
+  // trace-specific signal — never silent, never a rollback (L3).
   for (const move of advanced.moves) {
-    await recordGateTransition(advanced.state.taskId, move, repoRoot);
+    try {
+      await recordGateTransition(advanced.state.taskId, move, repoRoot);
+    } catch (/** @type {any} */ err) {
+      stderr.write(
+        `${JSON.stringify({
+          event: 'gate-advance.trace_error',
+          type: 'gate_transition',
+          from: move.from,
+          to: move.to,
+          reason: String(err?.message ?? err),
+        })}\n`,
+      );
+    }
   }
 
   const last = advanced.moves[advanced.moves.length - 1];
@@ -420,6 +540,7 @@ export async function handlePostToolUse(event, opts = {}) {
     artifact,
     blockedBy: advanced.blockedBy,
     alert,
+    stateWritten,
   };
 }
 
@@ -492,17 +613,37 @@ export async function main(_args) {
     return 0;
   }
 
+  // Runtime scope: plugin-level hooks fire in EVERY Copilot session. Act only
+  // inside a marked devmate session (lib/hooks/session-marker.mjs); otherwise
+  // exit silently — no gate writes, no trace, no context injection.
+  if (!isDevmatePayload(parsed)) return 0;
+
   // On exit 0 VS Code parses stdout as JSON, so the handler's human text must be
   // captured and handed back inside the one envelope the host reads — printing
   // it raw is a parse failure that drops the whole output (#77).
   const capture = createTextCapture();
   /** @type {string|null} */
   let alert = null;
+  /** @type {boolean} */
+  let advanceCrashed = false;
+  /** @type {boolean} */
+  let stateWritten = false;
   try {
     const result = await handlePostToolUse(eventFromPayload(parsed), { stdout: capture.stream });
     alert = result.alert;
+    stateWritten = result.stateWritten;
   } catch (/** @type {any} */ err) {
+    // The error message is human-only: it goes to stderr, which on this exit-0
+    // path VS Code shows in the Output panel, never to the model. No stack.
     process.stderr.write(`[gate-advance] ${err?.message ?? err}\n`);
+    // But the model must NOT see a clean, successful no-op when the gate silently
+    // failed to advance (#8) — surface host-honored, model-visible catch-up
+    // guidance via the same safe exit-0 additionalContext path a normal advance
+    // uses. Best-effort/non-blocking: exit 0, no stack, no sensitive detail.
+    // Only emit this message if the error occurred BEFORE state was persisted;
+    // if state WAS persisted and trace recording failed, the gate did move and
+    // the message would be inaccurate.
+    advanceCrashed = true;
   }
 
   // A dispatch that produced no evidence exits BLOCK, which routes the text to
@@ -512,6 +653,9 @@ export async function main(_args) {
   // party who could fix it, exactly like a working one.
   if (alert !== null) {
     return writeHookOutput('PostToolUse', `${capture.text()}\n${alert}`, EXIT_BLOCK);
+  }
+  if (advanceCrashed && !stateWritten) {
+    return writeHookOutput('PostToolUse', GATE_ADVANCE_RECOVERY_TEXT, 0);
   }
   return writeHookOutput('PostToolUse', capture.text(), 0);
 }

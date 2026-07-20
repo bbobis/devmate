@@ -1,0 +1,16 @@
+{
+  "_comment": "Expected-output rubric for the discovery component eval (E16-4). requiredPointers = evidence pointers a correct discovery pass MUST surface (coverage). groundedPaths = files that actually exist, so a claim whose file resolves elsewhere is ungrounded/spurious (groundedness, the pure-scorer stand-in for TCM-3 path resolution — the fixture declares ground truth so the scorer stays I/O-free). Thresholds are provisional — calibrate after the first baseline run (see docs/PATTERNS.md P7).",
+  "requiredPointers": [
+    "agents/orchestrator.agent.md#L162",
+    "lib/gate-transitions.mjs",
+    "docs/PATTERNS.md#L57"
+  ],
+  "groundedPaths": [
+    "agents/orchestrator.agent.md",
+    "lib/gate-transitions.mjs",
+    "docs/PATTERNS.md",
+    "lib/gatectl.mjs"
+  ],
+  "passThreshold": 0.8,
+  "expectedGoodScore": 1
+}

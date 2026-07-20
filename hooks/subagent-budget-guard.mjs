@@ -30,8 +30,10 @@ import {
   stopProcessingOutput,
 } from "../lib/hooks/output-schema.mjs";
 import { recordSubagentStart } from "../lib/hooks/subagent-index.mjs";
+import { isDevmateAgentType } from "../lib/agents/roster.mjs";
+import { markDevmateSession } from "../lib/hooks/session-marker.mjs";
 import { resolveHookRoot } from "../lib/init/repo-root.mjs";
-import { readTaskState, writeTaskState } from "../lib/task-state.mjs";
+import { mutateTaskStateUnderLock, readTaskState } from "../lib/task-state.mjs";
 import { appendTraceEvent } from "../lib/trace/append.mjs";
 import {
   isImplementationDispatch,
@@ -221,35 +223,57 @@ export async function handleSubagentStart(event) {
   }
 
   const state = stateResult.state;
-  const current =
-    typeof state.activeSubagents === "number" ? state.activeSubagents : 0;
   const max = resolveMaxConcurrentAgents(event.repoRoot);
 
-  if (current >= max) {
+  // #189: check-and-increment ATOMICALLY on the fresh in-lock state, so two
+  // concurrent SubagentStarts cannot both clear the ceiling on a stale count and
+  // over-admit — and the identity stamp cannot clobber a concurrent gate advance.
+  // #93: stamp the identity the host DID give us (`agent_type`, captured at
+  // SubagentStart) so the gate-guard's session-artifact rule has an `activeAgent`
+  // to read — PreToolUse carries no agent name of its own.
+  /** @type {number} */
+  let nextCount = 0;
+  let denied = false;
+  const outcome = await mutateTaskStateUnderLock(
+    (fresh) => {
+      const current =
+        typeof fresh.activeSubagents === "number" ? fresh.activeSubagents : 0;
+      if (current >= max) {
+        denied = true;
+        nextCount = current;
+        return null; // deny → no write
+      }
+      nextCount = current + 1;
+      return {
+        ...fresh,
+        activeSubagents: nextCount,
+        activeAgents: addActiveAgent(fresh.activeAgents ?? [], {
+          agentName: event.agentName,
+          agentId: event.agentId ?? '',
+        }),
+      };
+    },
+    statePath,
+    { event: "subagent-start" },
+  );
+  if (denied) {
     return {
       decision: "denied",
-      activeCount: current,
+      activeCount: nextCount,
       reason: `maxConcurrentAgents (${max}) reached`,
     };
   }
-
-  const nextCount = current + 1;
-  // #93: stamp the identity the host DID give us. PreToolUse carries no agent
-  // name, so the gate-guard's session-artifact rule has no way to know who is
-  // calling — unless the one event that does carry it (`agent_type`, captured at
-  // SubagentStart) records it on task state first. This is the producer that rule
-  // has been waiting for since #77; without it, `activeAgent` was permanently
-  // undefined and the rule permanently dormant.
-  /** @type {TaskState} */
-  const nextState = {
-    ...state,
-    activeSubagents: nextCount,
-    activeAgents: addActiveAgent(state.activeAgents ?? [], {
-      agentName: event.agentName,
-      agentId: event.agentId ?? '',
-    }),
-  };
-  await writeTaskState(nextState, statePath);
+  if (!outcome.ok) {
+    // #189: mutateTaskStateUnderLock is non-throwing (the old writeTaskState threw).
+    // Surface the persistence failure instead of swallowing it, and skip the trace
+    // — nothing was written, so a subagent_start event would carry a bogus count.
+    // Fail OPEN (the guard's deliberate stance) so a lifecycle event never crashes
+    // the session.
+    process.stderr.write(
+      `${JSON.stringify({ event: "subagent-start.persist_failed", reason: outcome.error })}\n`,
+    );
+    return { decision: "allowed", activeCount: nextCount };
+  }
 
   // taskId comes from the state file, the only source that holds it — the wire
   // payload carries none. So the event lands in the REAL task's trace file, where
@@ -296,20 +320,35 @@ export async function handleSubagentStop(event) {
   }
 
   const state = stateResult.state;
-  const current =
-    typeof state.activeSubagents === "number" ? state.activeSubagents : 0;
-  const nextCount = current > 0 ? current - 1 : 0;
-
-  /** @type {TaskState} */
-  const nextState = {
-    ...state,
-    activeSubagents: nextCount,
-    activeAgents: removeActiveAgent(state.activeAgents ?? [], {
-      agentName: event.agentName,
-      agentId: event.agentId ?? '',
-    }),
-  };
-  await writeTaskState(nextState, statePath);
+  // #189: atomic decrement-and-deregister on the fresh in-lock state (floored at
+  // 0), so a concurrent start's increment is not lost and a gate advance is not
+  // clobbered.
+  /** @type {number} */
+  let nextCount = 0;
+  const outcome = await mutateTaskStateUnderLock(
+    (fresh) => {
+      const current =
+        typeof fresh.activeSubagents === "number" ? fresh.activeSubagents : 0;
+      nextCount = current > 0 ? current - 1 : 0;
+      return {
+        ...fresh,
+        activeSubagents: nextCount,
+        activeAgents: removeActiveAgent(fresh.activeAgents ?? [], {
+          agentName: event.agentName,
+          agentId: event.agentId ?? '',
+        }),
+      };
+    },
+    statePath,
+    { event: "subagent-stop" },
+  );
+  if (!outcome.ok) {
+    // #189: surface a persistence failure (non-throwing API) and skip the trace.
+    process.stderr.write(
+      `${JSON.stringify({ event: "subagent-stop.persist_failed", reason: outcome.error })}\n`,
+    );
+    return { activeCount: nextCount };
+  }
 
   await appendTraceEvent(
     {
@@ -423,10 +462,22 @@ export async function main(args) {
   // already read, which is the only honest source.
   const repoRoot = resolveHookRoot(/** @type {{ cwd?: string }} */ (p));
   const agentId = typeof p["agent_id"] === "string" ? p["agent_id"] : "";
-  const agentName =
-    typeof p["agent_type"] === "string" && p["agent_type"] !== ""
-      ? p["agent_type"]
-      : agentId;
+  const rawAgentType = typeof p["agent_type"] === "string" ? p["agent_type"] : "";
+  const agentName = rawAgentType !== "" ? rawAgentType : agentId;
+
+  // Runtime scope: this hook fires for EVERY subagent in EVERY session —
+  // including another plugin's. Act ONLY for devmate's own agents; anything else
+  // (an unknown agent_type, another plugin's subagent) leaves the guard inert so
+  // it can never meter or deny a dispatch that isn't devmate's. The `agent_type`
+  // is the one moment agent identity is on the wire, so this is also where a
+  // session is FIRST recognized as devmate: a devmate SubagentStart drops the
+  // session marker that flips gate-guard and the PostToolUse validators from
+  // inert to enforcing for the remainder of the session (lib/hooks/session-marker.mjs).
+  if (!isDevmateAgentType(rawAgentType)) return EXIT_OK;
+  if (mode === "start") {
+    const sessionId = typeof p["session_id"] === "string" ? p["session_id"] : undefined;
+    markDevmateSession(sessionId, rawAgentType);
+  }
 
   try {
     if (mode === "start") {

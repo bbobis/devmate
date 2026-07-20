@@ -5,11 +5,17 @@ import { readTaskState } from "../lib/task-state.mjs";
 import { escalateChoreToFeature } from "../lib/workflow/lanes/chore.mjs";
 
 /**
- * `escalate-chore` entrypoint. Reads the current task state, escalates an
- * approved chore to the feature lane (re-entering at the real `plan-approved`
- * gate), and prints a compact result JSON. Also writes result to
- * .devmate/state/escalate-chore-result.json so the agent can read_file when
+ * `escalate-chore` manual/recovery CLI. Reads the current task state,
+ * escalates an approved chore to the feature lane (re-entering at the real
+ * `plan-approved` gate), and prints a compact result JSON. Also writes result
+ * to .devmate/state/escalate-chore-result.json so the agent can read_file when
  * shell integration is absent (E11-1).
+ *
+ * #130: the RUNTIME path for escalation is the human phrase
+ * "escalate chore to feature: <reason>" handled by hooks/approval-listener.mjs.
+ * The orchestrator (which owns the workflow) declares no execute tool, and no
+ * hook, skill, or agent instruction wires this script — it remains for a
+ * human running it by hand.
  *
  * Anti-hallucination note: the spec's escalation target gate `tech-design` is
  * NOT a real WorkflowGate. The feature lane re-enters at `plan-approved`.

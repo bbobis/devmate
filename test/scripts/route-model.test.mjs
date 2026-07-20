@@ -60,7 +60,7 @@ async function run(args, opts) {
 }
 
 /**
- * @param {{ budgetClass?: string, policy?: unknown, withBaselines?: boolean }} opts
+ * @param {{ budgetClass?: string, policy?: unknown, withBaselines?: boolean, acceptanceCriteria?: string[], planAc?: string[] }} opts
  * @returns {Promise<{ root: string, taskStatePath: string, policyPath: string, evalsDir: string }>}
  */
 async function makeWorkspace(opts = {}) {
@@ -68,6 +68,23 @@ async function makeWorkspace(opts = {}) {
   const stateDir = join(root, '.devmate', 'state');
   await fsp.mkdir(stateDir, { recursive: true });
   const taskStatePath = join(stateDir, 'task.json');
+  // #217: seed the APPROVED PLAN artifact (present at route-model's plan-approved
+  // invocation) as the real AC signal — the production path route-model reads,
+  // not the spec's state.acceptanceCriteria, which does not exist yet at that gate.
+  if (opts.planAc) {
+    const planDir = join(root, '.devmate', 'session', 't-route');
+    await fsp.mkdir(planDir, { recursive: true });
+    await fsp.writeFile(
+      join(planDir, 'plan.json'),
+      JSON.stringify({
+        tasks: [{ description: 'impl', ac: opts.planAc, tddApproach: 'unit', persona: 'backend', files: ['x.mjs'] }],
+        assumptions: [],
+        openRisks: [],
+        unverified: [],
+      }),
+      'utf8'
+    );
+  }
   await fsp.writeFile(
     taskStatePath,
     JSON.stringify({
@@ -79,6 +96,7 @@ async function makeWorkspace(opts = {}) {
       preImplStash: null,
       budget: 10,
       schemaVersion: 1,
+      ...(opts.acceptanceCriteria ? { acceptanceCriteria: opts.acceptanceCriteria } : {}),
       outputContract: {
         lane: 'feature',
         format: 'pr',
@@ -119,6 +137,58 @@ test('advisory recommendation for unverified policy does not throw', async () =>
   assert.equal(hint.mode, 'advisory');
   assert.equal(hint.verified, false);
   assert.match(hint.modelId, /UNVERIFIED/);
+  // #27: the advisory hint carries a cheap/powerful cost tier with a reason.
+  assert.equal(hint.tier, 'cheap');
+  assert.equal(typeof hint.tierReason, 'string');
+  assert.ok(hint.tierReason.length > 0);
+});
+
+test('#27: a large budget class yields a powerful tier on the advisory hint', async () => {
+  const { root, taskStatePath, policyPath, evalsDir } = await makeWorkspace({ budgetClass: 'large' });
+  const { code, out } = await run([taskStatePath], { policyPath, evalsDir, traceRoot: root });
+  assert.equal(code, 0, out);
+  const hint = JSON.parse(await fsp.readFile(join(root, '.devmate', 'state', 'model-route.json'), 'utf8'));
+  assert.equal(hint.budgetClass, 'large');
+  assert.equal(hint.tier, 'powerful');
+  assert.match(hint.tierReason, /large budget class/);
+});
+
+test('#217: a standard class with a many-AC approved plan escalates to a powerful tier', async () => {
+  // 6 ACs in the approved plan → difficulty 0.75 ≥ threshold → powerful, driven by
+  // the plan's AC count (the real artifact at plan-approved), not the budget class.
+  const { root, taskStatePath, policyPath, evalsDir } = await makeWorkspace({
+    budgetClass: 'standard',
+    planAc: ['a', 'b', 'c', 'd', 'e', 'f'],
+  });
+  const { code, out } = await run([taskStatePath], { policyPath, evalsDir, traceRoot: root });
+  assert.equal(code, 0, out);
+  const hint = JSON.parse(await fsp.readFile(join(root, '.devmate', 'state', 'model-route.json'), 'utf8'));
+  assert.equal(hint.budgetClass, 'standard');
+  assert.equal(hint.tier, 'powerful');
+});
+
+test('#217: a standard class with a few-AC approved plan stays cheap', async () => {
+  const { root, taskStatePath, policyPath, evalsDir } = await makeWorkspace({
+    budgetClass: 'standard',
+    planAc: ['a', 'b'],
+  });
+  const { code } = await run([taskStatePath], { policyPath, evalsDir, traceRoot: root });
+  assert.equal(code, 0);
+  const hint = JSON.parse(await fsp.readFile(join(root, '.devmate', 'state', 'model-route.json'), 'utf8'));
+  assert.equal(hint.tier, 'cheap');
+});
+
+test('#217: with no plan, the spec acceptanceCriteria on state is the fallback signal', async () => {
+  // A later invocation (post-spec) has no plan.json here but does have the spec's
+  // acceptance criteria on state — the fallback path still escalates.
+  const { root, taskStatePath, policyPath, evalsDir } = await makeWorkspace({
+    budgetClass: 'standard',
+    acceptanceCriteria: ['a', 'b', 'c', 'd', 'e', 'f'],
+  });
+  const { code } = await run([taskStatePath], { policyPath, evalsDir, traceRoot: root });
+  assert.equal(code, 0);
+  const hint = JSON.parse(await fsp.readFile(join(root, '.devmate', 'state', 'model-route.json'), 'utf8'));
+  assert.equal(hint.tier, 'powerful');
 });
 
 test('routeModel throws on verifiedAt null without allowUnverified', () => {
@@ -138,6 +208,9 @@ test('assertEvalBaselineExists blocks a verified ID with no baseline', async () 
   // hint cannot survive) and a blocked model_route trace event is appended.
   const hint = JSON.parse(await fsp.readFile(join(root, '.devmate', 'state', 'model-route.json'), 'utf8'));
   assert.equal(hint.mode, 'blocked');
+  // #27: the durable blocked hint still carries the advisory tier metadata.
+  assert.equal(hint.tier, 'cheap');
+  assert.equal(typeof hint.tierReason, 'string');
   const trace = await fsp.readFile(join(root, '.devmate', 'state', 'trace', 't-route.jsonl'), 'utf8');
   const events = /** @type {any[]} */ (parseJsonl(trace));
   assert.ok(events.some((e) => e.type === 'model_route' && e.mode === 'blocked'));
@@ -167,6 +240,10 @@ test('records a route trace event', async () => {
   assert.equal(routeEvent.budgetClass, 'large');
   assert.equal(routeEvent.mode, 'advisory');
   assert.equal(routeEvent.taskId, 't-route');
+  // #27: the tier on the trace event can only be there if the decision routed
+  // through the gateway seam (its record sink is the sole telemetry source).
+  assert.equal(routeEvent.tier, 'powerful');
+  assert.match(routeEvent.tierReason, /large budget class/);
 });
 
 test('unclassified state falls back to standard advisory without crashing', async () => {

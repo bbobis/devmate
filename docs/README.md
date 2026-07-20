@@ -17,6 +17,7 @@ Build conventions live in **[../CONTRIBUTING.md](../CONTRIBUTING.md)** — `.mjs
 Each of these is authoritative for exactly its own mechanism:
 
 - [gates.md](./gates.md) — gate names, statuses, `gatectl` syntax
+- [state-management.md](./state-management.md) — how `task.json` is mutated: `stateVersion`, the atomic mutation API, the transition log, the writer guard
 - [gate-guard.md](./gate-guard.md) — the fail-closed PreToolUse guard
 - [skill-matching.md](./skill-matching.md) — how skills are chosen: dual-root loading, lexical scoring, state re-rank, the intent-gated menu, the decision ledger, and the eval
 - [artifacts.md](./artifacts.md) — session artifacts + spec digest flow
@@ -26,6 +27,7 @@ Each of these is authoritative for exactly its own mechanism:
 - [hooks.md](./hooks.md) — hook registrations and payloads
 - [discovery-scan.md](./discovery-scan.md) — deterministic, zero-LLM-cost candidate-file scan (fan-out/fan-in Phase 1)
 - [discovery-merge.md](./discovery-merge.md) — discovery-artifact fan-in merge: dedup, corroboration, conflicts, rank-before-cap (fan-out/fan-in Phase 2)
+- [transition-matrix.md](./transition-matrix.md) — the model-based exhaustive gate × event × lane E2E net: oracle sources, nightly/PR budget split, golden-cell guardrails
 - [SCRIPTS.md](./SCRIPTS.md) — every CLI script, usage and exit codes
 - [model-policy.md](./model-policy.md) — model routing policy (no hardcoded IDs)
 - [agent-capability-rules.md](./agent-capability-rules.md) — claim-to-tool mapping rules

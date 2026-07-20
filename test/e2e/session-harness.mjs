@@ -16,7 +16,6 @@
  *     `.devmate/` folder, which is what monoroot makes workspaceFolders[0] and
  *     therefore what VS Code hands every hook.
  */
-import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +23,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadHookManifest, extractScriptPath } from '../../lib/hooks/registry.mjs';
 import { getOwn } from '../../lib/object-utils.mjs';
-import { TRANSITIONS, STEERING, legalTransitions } from '../../lib/gate-transitions.mjs';
+import { readJsonlSync } from '../../lib/json-io.mjs';
+import { markDevmateSession } from '../../lib/hooks/session-marker.mjs';
+import { TRANSITIONS, STEERING } from '../../lib/gate-transitions.mjs';
 
 /** @typedef {import('../../lib/types.mjs').TaskState} TaskState */
 /** @typedef {import('../../lib/types.mjs').Lane} Lane */
@@ -38,6 +39,16 @@ export const REPO_ROOT = resolve(__dirname, '..', '..');
 
 /** The cwd the host actually hands every hook in the monoroot layout. */
 export const HOST_CWD_REL = '.devmate';
+
+/**
+ * Canonical session id for the default test session — derived from the captured
+ * fixture (`test/fixtures/hook-payloads/captured/posttooluse.run-subagent.json`),
+ * so the harness payloads and the fixture share one id.
+ */
+export const DEFAULT_SESSION_ID = 'fd634936-8166-4295-a74f-2a397c9c5226';
+
+/** Frozen wall-clock timestamp for deterministic test payloads. */
+export const DEFAULT_CLOCK = '2026-01-01T00:00:00.000Z';
 
 /**
  * Build the workspace in the shape devmate ships into: a monoroot worktree whose
@@ -125,20 +136,50 @@ export function rebase(event, hostCwd) {
 
 /**
  * Spawn one hook exactly as the host does.
+ *
+ * `opts` is a purely additive test seam (issue #8) with two knobs, both of which
+ * mimic something the real host controls:
+ *   - `env`       extra environment variables layered over the process env — the
+ *                 host owns a hook's environment, and this is the ONLY way the
+ *                 fault seam (lib/testing/fault-injection.mjs) is ever armed.
+ *   - `timeoutMs` overrides the spawn timeout. A short value stands in for the
+ *                 host's own hook-timeout kill: when a hook hangs, the host
+ *                 SIGTERMs it, and spawnSync's timeout does exactly that. This is
+ *                 HARNESS-EMULATED — devmate does not implement the host timeout.
+ *
+ * When a spawn is killed by its timeout, spawnSync returns a null exit status and
+ * a `signal` (SIGTERM); `signal` is surfaced so a caller can tell a host-killed
+ * hang apart from an ordinary exit. `status` keeps its historical `?? 1` fallback
+ * so existing callers that only compare against 0 are unaffected.
  * @param {string} script
  * @param {string[]} args
  * @param {unknown} payload
  * @param {string} cwd
- * @returns {{ script: string, status: number, stdout: string, stderr: string }}
+ * @param {{ env?: Record<string, string>, timeoutMs?: number }} [opts]
+ * @returns {{ script: string, status: number, signal: string|null, stdout: string, stderr: string }}
  */
-export function spawnHook(script, args, payload, cwd) {
+export function spawnHook(script, args, payload, cwd, opts = {}) {
+  // These E2E suites simulate ACTIVE devmate sessions, so enforcement must be
+  // live. In a real session the marker is set by the first devmate
+  // SubagentStart; here we mark the payload's session up front so every spawned
+  // hook runs in a devmate-scoped session (a hook that no longer enforces
+  // because of runtime scoping cannot then hide behind an unmarked session).
+  const sid = getOwn(/** @type {Record<string, unknown>} */ (payload ?? {}), 'session_id');
+  if (typeof sid === 'string' && sid !== '') markDevmateSession(sid, 'router');
   const r = spawnSync('node', [join(REPO_ROOT, script), ...args], {
     input: JSON.stringify(payload),
     cwd,
     encoding: 'utf8',
-    timeout: 20000,
+    timeout: opts.timeoutMs ?? 20000,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
   });
-  return { script, status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  return {
+    script,
+    status: r.status ?? 1,
+    signal: r.signal ?? null,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+  };
 }
 
 /**
@@ -189,12 +230,277 @@ export function readState(root) {
 }
 
 /**
- * Read the task state a session produced, or `null` when no task.json exists
- * yet (the pre-bootstrap window). Unlike {@link readState}, never throws.
+ * A `runSubagent` PostToolUse payload in the host's captured shape (prose then
+ * embedded JSON), matching
+ * `test/fixtures/hook-payloads/captured/posttooluse.run-subagent.json` key-for-key:
+ * `tool_input` is the elided literal, and `tool_response` is the agent's chat
+ * text — prose followed by the embedded JSON contract, which is exactly where
+ * the gate-advance hook reads the agent's identity and result from.
+ *
+ * The `agentName` argument is the default identity embedded in the JSON;
+ * a matching key inside `returnBody` overrides it (so a self-identifying body
+ * uses when the host index has no entry). The `agentName` argument is the
+ * default; a matching key inside `returnBody` overrides it.
+ *
+ * The prose deliberately carries a literal `{}` BEFORE the JSON: a real agent
+ * reply narrates and quotes code ("the guard returns `{}` for anonymous
+ * callers"), so a brace-span parser that took first-`{`-to-last-`}` would swallow
+ * the empty braces and the contract together and parse nothing (#105). Baking the
+ * hardening in here means every scripted return exercises the harder path
+ * `extractEmbeddedJson` must survive, and no suite has to re-invent it.
+ *
+ * @param {string} agentName            Agent whose return this simulates (e.g. 'router').
+ * @param {unknown} returnBody          The agent's contract object (its typed return).
+ * @param {{ toolUseId?: string }} [opts]
+ * @returns {Record<string, unknown>}
+ */
+export function subagentReturnPayload(agentName, returnBody, opts = {}) {
+  const toolUseId = opts.toolUseId ?? `toolu_${agentName}__vscode-1783942732395`;
+  const embedded = { agentName, ...(/** @type {any} */ (returnBody)) };
+  return {
+    hook_event_name: 'PostToolUse',
+    session_id: DEFAULT_SESSION_ID,
+    transcript_path: '.devmate/state/transcript.jsonl',
+    tool_name: 'runSubagent',
+    tool_input: '...',
+    tool_response:
+      `Returning the ${agentName} contract. The {} braces in this prose come before the JSON, ` +
+      `so a brace-span parser cannot cheat.\n\n${JSON.stringify(embedded)}`,
+    tool_use_id: toolUseId,
+    cwd: HOST_CWD_REL,
+  };
+}
+
+/**
+ * The full SubagentStart → PostToolUse(return) → SubagentStop trio a real
+ * dispatch emits, built from the canonical fixture-shaped payload
+ * ({@link subagentReturnPayload}). The return's `tool_use_id` is derived from
+ * `agentId` with the host's `__vscode` suffix, so it links back to its start the
+ * way `resolveAgentName` joins them; `agentType` is both the SubagentStart
+ * `agent_type` (the host identity channel) and the embedded `agentName`.
+ *
+ * This is the one place the trio is defined: journey suites replay it rather than
+ * re-authoring the wire shape, so a change to the captured fixture updates every
+ * suite through this single builder.
+ *
+ * @param {string} agentId              Host `agent_id` for the SubagentStart/Stop pair.
+ * @param {string} agentType            Agent name (SubagentStart `agent_type` + embedded `agentName`).
+ * @param {unknown} returnBody          The agent's typed contract object.
+ * @returns {Record<string, unknown>[]}
+ */
+export function subagentDispatch(agentId, agentType, returnBody) {
+  const toolUseId = `${agentId}__vscode-1783942732395`;
+  return [
+    { hook_event_name: 'SubagentStart', session_id: DEFAULT_SESSION_ID, agent_id: agentId, agent_type: agentType },
+    subagentReturnPayload(agentType, returnBody, { toolUseId }),
+    { hook_event_name: 'SubagentStop', session_id: DEFAULT_SESSION_ID, agent_id: agentId, agent_type: agentType },
+  ];
+}
+
+/**
+ * Read a JSONL trace file into objects, via the canonical reader. Shared so the
+ * journey suites do not each re-wrap {@link readJsonlSync}.
+ * @param {string} filePath
+ * @returns {Record<string, any>[]}
+ */
+export function readTraceEvents(filePath) {
+  return /** @type {Record<string, any>[]} */ (readJsonlSync(filePath));
+}
+
+/**
+ * Fire the real SessionStart hook over an EXISTING workspace — a "second
+ * session over the same workspace" (issue #7): a chat fork, an overnight
+ * restart, or a post-compaction resume all begin exactly this way. Nothing is
+ * reset by the harness; whatever the hook does to the durable state IS the
+ * behavior under test.
+ * @param {string} hostCwd    The workspace's own `.devmate/` folder.
+ * @param {string} sessionId  Host session id for the new session.
+ * @param {{ source?: string }} [opts]  SessionStart `source` (default 'new').
+ * @returns {{ script: string, status: number, stdout: string, stderr: string }[]}
+ */
+export function startSession(hostCwd, sessionId, opts = {}) {
+  return replaySession(
+    [{ hook_event_name: 'SessionStart', session_id: sessionId, source: opts.source ?? 'new' }],
+    hostCwd,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// #131: a scripted-turn driver (`runSession`) and a stuck-state assertion
+// helper (`isUserStuck`) on top of the primitives above. The invariant this
+// whole epic protects — after any turn EITHER the gate advanced OR the model
+// was told why not — needs an assertion, and every scenario issue needs to
+// drive real turns without hand-assembling each payload.
+// ---------------------------------------------------------------------------
+
+/**
+ * The gate events some REAL runtime caller actually fires, keyed BY LANE — because
+ * fireability is still lane-specific for steering: `revise-scope`/`re-plan` fire
+ * only on the feature lane (`steerFeature` throws for any other lane,
+ * `lib/workflow/lanes/feature.mjs`), reached from the approval listener. Crediting
+ * a feature-only event to the wrong lane is the "looks-fireable-isn't" false-negative
+ * this helper exists to catch.
+ *
+ * `pass-verification` is now fired by the gate-advance hook on EVERY lane: #132 put
+ * it in `LANE_CHAINS` for all three, so the hook advances `impl-started →
+ * verification-passed` once the verify precondition holds. Before #132 it was in no
+ * chain and its only firer (`runChoreLane`, reached from tests only — never a hook
+ * or script) never ran at runtime, so a feature or bug task dead-ended at
+ * `impl-started` — the false-negative that lane-scoping caught, now fixed at the source.
+ *
+ * Re-derive per lane with a grep over the runtime surface for every event handed
+ * to a gate mover, plus the chain the gate-advance hook walks:
+ *
+ *   grep -rnE '(transitionGate|advanceGate|advanceAlongLane|steerFeature)\(' hooks lib/workflow
+ *   # then read LANE_CHAINS in lib/workflow/gate-advance.mjs for the spine events
+ *
+ * A listed-but-uncalled event is deliberately ABSENT from every lane: `mark-pr-ready`
+ * and `complete` (verification-passed/pr-ready advance by the "approve pr" phrase or
+ * the chore lane's verified terminal — no hook fires these events), `approve-plan`
+ * (the phrase fires `start-impl`, not this vestigial event), and
+ * `new-requirements` / `park` / `resume` / `abandon` (fired only by the gatectl CLI,
+ * a manual recovery tool). Encoded as a maintained constant, not a live grep, for
+ * determinism (CONTRIBUTING §4).
+ * @type {Readonly<Record<Lane, ReadonlySet<GateEvent>>>}
+ */
+export const RUNTIME_FIREABLE_EVENTS = Object.freeze(/** @type {Record<Lane, ReadonlySet<GateEvent>>} */ ({
+  // LANE_CHAINS[feature] (gate-advance hook, incl. #132's `pass-verification`) +
+  // the approve-spec continuation (`start-impl`) + the approval listener's
+  // steerFeature (#127).
+  feature: new Set(/** @type {GateEvent[]} */ ([
+    'set-lane', 'finish-discovery', 'finish-grill', 'finish-plan', 'draft-spec',
+    'start-impl', 'pass-verification', 'revise-scope', 're-plan',
+  ])),
+  // LANE_CHAINS[bug] (incl. #132's `pass-verification`) + the approve-plan
+  // continuation (`start-impl`). No steering (feature-only).
+  bug: new Set(/** @type {GateEvent[]} */ ([
+    'set-lane', 'finish-grill', 'present-plan', 'start-impl', 'pass-verification',
+  ])),
+  // LANE_CHAINS[chore] (mechanical, incl. `start-impl` and #132's `pass-verification`).
+  chore: new Set(/** @type {GateEvent[]} */ ([
+    'set-lane', 'present-plan', 'start-impl', 'pass-verification',
+  ])),
+}));
+
+/**
+ * Gates where a task is at a LEGITIMATE rest, so it is never "stuck" even though
+ * the event intersection finds no runtime-fireable exit:
+ *   - `done` / `abandoned` : terminal — a legitimate end, not a dead end.
+ *   - `parked`             : a deliberate pause; `resume` (the gatectl recovery
+ *                            CLI, or a fresh session) is the way back.
+ *   - `spec-draft`         : the "approve spec" / "revise spec:" human gate —
+ *                            advanced by a phrase through `advanceHumanGate`,
+ *                            which carries no GateEvent, so the event check
+ *                            cannot see it.
+ *   - `verification-passed`: the "approve pr" human gate on feature/bug, and the
+ *                            chore lane's verified terminal (its verified rest;
+ *                            only the CLI walks it to `done`).
+ *   - `pr-ready`           : the PR is ready — the workflow has succeeded. Only
+ *                            the vestigial `complete` (CLI-only) remains, so the
+ *                            user is finished here, never wedged.
+ * @type {ReadonlySet<WorkflowGate>}
+ */
+const RESTING_GATES = new Set(/** @type {WorkflowGate[]} */ ([
+  'done', 'abandoned', 'parked', 'spec-draft', 'verification-passed', 'pr-ready',
+]));
+
+/**
+ * Every gate EVENT legal from (lane, gate): the lane-owned events keyed in
+ * {@link TRANSITIONS} unioned with the lane-agnostic {@link STEERING} events.
+ * Distinct from `legalTransitions()`, which returns the target GATES — the stuck
+ * check needs the EVENT names, to intersect with the runtime-fireable allowlist.
+ * @param {Lane} lane
+ * @param {WorkflowGate} gate
+ * @returns {GateEvent[]}
+ */
+function legalEventsFrom(lane, gate) {
+  /** @type {GateEvent[]} */
+  // @bounded-alloc — the events keyed at one gate across two frozen tables (< 10).
+  const events = [];
+  const laneTable = getOwn(TRANSITIONS, lane);
+  const gateTable = laneTable ? getOwn(laneTable, gate) : undefined;
+  if (gateTable) events.push(.../** @type {GateEvent[]} */ (Object.keys(gateTable)));
+  const steerTable = getOwn(STEERING, gate);
+  if (steerTable) events.push(.../** @type {GateEvent[]} */ (Object.keys(steerTable)));
+  return events;
+}
+
+/**
+ * True when, from the CURRENT persisted task state, no legal event is fireable by
+ * any real runtime caller ON THIS LANE and the task is not at a legitimate resting
+ * gate — i.e. the user has no path forward.
+ *
+ * "Fireable" is the lane's legal events ({@link legalEventsFrom}, derived from
+ * lib/gate-transitions.mjs) INTERSECTED with the lane's slice of
+ * {@link RUNTIME_FIREABLE_EVENTS}, so an event legal in the table but that no
+ * caller on THIS lane invokes does NOT count. That intersection is the check that
+ * caught two dead-ends this epic closed: `revise-scope`/`re-plan` legal at feature
+ * `impl-started` but with no caller (before #127 wired the steering), and the
+ * forward `pass-verification` legal at every `impl-started` but fired by nothing
+ * at runtime (before #132 put it in every LANE_CHAIN — its only firer,
+ * `runChoreLane`, is reached from tests only). Pass a flat `opts.fireableEvents`
+ * to prove the verdict against a hand-built table; the {@link RESTING_GATES}
+ * carve-outs never mask it.
+ * @param {TaskState} state
+ * @param {{ fireableEvents?: ReadonlySet<GateEvent>|GateEvent[] }} [opts]
+ *        Inject a lane-independent allowlist that overrides the per-lane default.
+ * @returns {boolean}
+ */
+export function isUserStuck(state, opts = {}) {
+  const gate = /** @type {WorkflowGate} */ (state.workflowGate);
+  if (RESTING_GATES.has(gate)) return false;
+  const lane = /** @type {Lane} */ (state.lane);
+  /** @type {ReadonlySet<GateEvent>} */
+  const fireable =
+    opts.fireableEvents === undefined
+      ? getOwn(RUNTIME_FIREABLE_EVENTS, lane) ?? new Set()
+      : opts.fireableEvents instanceof Set
+        ? opts.fireableEvents
+        : new Set(opts.fireableEvents);
+  for (const event of legalEventsFrom(lane, gate)) {
+    if (fireable.has(event)) return false;
+  }
+  return true;
+}
+
+/**
+ * One turn in a scripted session: a user prompt, then zero or more tool-call /
+ * subagent-return steps, in order.
+ * @typedef {Object} Turn
+ * @property {string} prompt        UserPromptSubmit prompt text.
+ * @property {ToolStep[]} [tools]   Tool calls / subagent returns after the prompt, in order.
+ */
+
+/**
+ * One tool step. With `subagentReturn`, it is a subagent dispatch whose typed
+ * return is replayed as the full SubagentStart -> PostToolUse(return) ->
+ * SubagentStop trio ({@link subagentDispatch}); `toolName` is then the AGENT name
+ * (e.g. 'router', 'planner'). Without it, `toolName` is an ordinary tool driven
+ * as a PreToolUse / PostToolUse pair.
+ * @typedef {Object} ToolStep
+ * @property {string} toolName
+ * @property {Record<string, unknown>} [toolInput]
+ * @property {unknown} [subagentReturn]
+ */
+
+/**
+ * What one turn produced.
+ * @typedef {Object} TurnResult
+ * @property {string} prompt      The turn's prompt.
+ * @property {{ script: string, status: number, stdout: string, stderr: string }[]} ran
+ *           Every hook that ran this turn (prompt hooks + each tool step's hooks).
+ * @property {TaskState|null} stateAfter  Persisted task state after the turn, or null if none exists yet.
+ * @property {WorkflowGate|null} gate     `stateAfter.workflowGate`, or null.
+ * @property {boolean} stuck              {@link isUserStuck}(stateAfter); false when there is no state.
+ */
+
+/**
+ * Read the persisted task state if it exists, else null — before the bootstrap
+ * SessionStart writes it, or in a torn state a scenario deliberately creates.
  * @param {string} root
  * @returns {TaskState|null}
  */
-export function readStateOrNull(root) {
+function readStateOrNull(root) {
   const statePath = join(root, '.devmate', 'state', 'task.json');
   if (!existsSync(statePath)) return null;
   try {
@@ -204,254 +510,15 @@ export function readStateOrNull(root) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Scripted-turn driver (issue #131)
-//
-// The primitives above (`hooksFor`/`spawnHook`/`replaySession`/`readState`)
-// run the real hooks as real subprocesses against a real workspace. What they
-// lack is a *turn* — a user prompt followed by the tool calls and subagent
-// returns it triggers — and a way to assert, after every turn, the single
-// invariant this whole family of suites exists to protect: EITHER the gate
-// advanced, OR no runtime caller could have advanced it (the user is stuck).
-// Everything below is that layer, built ON the primitives, never replacing them.
-// ---------------------------------------------------------------------------
-
-/** The host session id stamped on every event this driver builds. */
-export const DEFAULT_SESSION_ID = 'fd634936-8166-4295-a74f-2a397c9c5226';
-
 /**
- * Fixed ISO timestamp the driver stamps when no clock is injected, so a scripted
- * session yields byte-identical payloads run to run. Injectable via `opts.now`.
- */
-const DEFAULT_CLOCK = '2026-01-01T00:00:00.000Z';
-
-/**
- * Gate events that a REAL, hook-reachable runtime caller actually fires — the
- * caller allowlist `isUserStuck` intersects with the transition table. An event
- * that is in the table but that nothing fires is NOT fireable, so it does not
- * count as a path forward.
- *
- * Re-derive from the repo root with:
- *   grep -rnoE "(transitionGate|advanceGate)\(.+, *['\"][a-z-]+['\"]" hooks/ lib/workflow/
- * then union the LANE_CHAINS in lib/workflow/gate-advance.mjs (fired by
- * `advanceAlongLane`, which the PostToolUse `hooks/gate-advance.mjs` calls).
- *
- * Callers, by the three categories the {@link isUserStuck} contract names:
- *   - approval phrase:      hooks/approval-listener.mjs — "approve plan" fires
- *                           `start-impl` (bug/chore) via transitionGate.
- *   - PostToolUse catch-up: hooks/gate-advance.mjs → advanceAlongLane fires the
- *                           LANE_CHAINS events set-lane, finish-discovery,
- *                           finish-grill, finish-plan, present-plan, draft-spec,
- *                           start-impl as the evidence for each gate lands.
- *   - dispatchable agent:   folded into PostToolUse catch-up — an agent dispatch
- *                           produces the evidence that fires the chain event.
- *
- * Deliberately EXCLUDED — present in lib/gate-transitions.mjs, but NO
- * hook-reachable caller fires them (a listed-but-uncalled event is NOT
- * fireable). This is exactly the "steering is dead code" class this epic exists
- * to surface, so the exclusion is load-bearing, not an oversight:
- *   - pass-verification, complete: fired only inside lib/workflow/lanes/*.mjs
- *       executor functions that no hook calls.
- *   - mark-pr-ready:   "approve pr" advances the verification-passed → pr-ready
- *       GATE edge via advanceHumanGate; nothing fires the `mark-pr-ready` event.
- *   - revise-scope, re-plan: fired only by lib/workflow/lanes/feature.mjs
- *       `steerFeature`, which has NO caller anywhere.
- *   - new-requirements, park, resume, abandon: steering edges with no caller.
- *   - approve-plan:    in the GateEvent union but in no transition table and
- *                      fired by nothing.
- * @type {ReadonlySet<GateEvent>}
- */
-export const FIREABLE_EVENTS = new Set(
-  /** @type {GateEvent[]} */ ([
-    'set-lane',
-    'finish-discovery',
-    'finish-grill',
-    'finish-plan',
-    'present-plan',
-    'draft-spec',
-    'start-impl',
-  ]),
-);
-
-/**
- * Gates a human approval PHRASE advances FROM through a gate-EDGE
- * (advanceHumanGate), which carries no GateEvent — so {@link FIREABLE_EVENTS}
- * cannot see the move and it must be recorded here. A task sitting on one of
- * these is never stuck: the human types the phrase and the gate moves.
- *   spec-draft          "approve spec" → spec-approved   (hooks/approval-listener.mjs)
- *   verification-passed "approve pr"   → pr-ready         (hooks/approval-listener.mjs)
- * plan-approved is NOT listed: its forward move IS an event (`start-impl` on
- * bug/chore, `draft-spec` on feature), so {@link FIREABLE_EVENTS} already covers
- * it. Re-derive by grepping hooks/approval-listener.mjs for advanceHumanGate targets.
- * @type {ReadonlySet<WorkflowGate>}
- */
-const HUMAN_APPROVAL_GATES = new Set(
-  /** @type {WorkflowGate[]} */ (['spec-draft', 'verification-passed']),
-);
-
-/**
- * The GateEvents legal from `(lane, gate)`: the keys of the lane-owned
- * transition table and the lane-agnostic steering table, plus `resume` at
- * `parked` (transitionGate's dynamic edge, which lives in no static table).
- * Mirrors {@link legalTransitions} but at the event level, because the caller
- * allowlist is event-keyed.
- * @param {Lane} lane
- * @param {WorkflowGate} gate
- * @returns {GateEvent[]}
- */
-function legalEventsFrom(lane, gate) {
-  /** @type {Set<GateEvent>} */
-  // @bounded-alloc — a handful of events per gate across two frozen tables.
-  const events = new Set();
-  const laneTable = getOwn(TRANSITIONS, lane);
-  const gateTable = laneTable === undefined ? undefined : getOwn(laneTable, gate);
-  if (gateTable) {
-    for (const event of Object.keys(gateTable)) events.add(/** @type {GateEvent} */ (event));
-  }
-  const steeringTable = getOwn(STEERING, gate);
-  if (steeringTable) {
-    for (const event of Object.keys(steeringTable)) events.add(/** @type {GateEvent} */ (event));
-  }
-  if (gate === 'parked') events.add('resume');
-  return [...events];
-}
-
-/**
- * True when, from the CURRENT persisted task state, no legal event is fireable
- * by any real runtime caller — the user has no path forward and, unless the hook
- * that just ran said why, will sit forever.
- *
- * The verdict is `legalTransitions()` (what the table permits from here)
- * intersected with a maintained caller allowlist ({@link FIREABLE_EVENTS} +
- * {@link HUMAN_APPROVAL_GATES}), NOT the full theoretical table: a transition
- * the table lists but no caller fires does not rescue the user. A gate with no
- * legal successor at all is terminal (`done`/`abandoned`) — a legitimate END,
- * not stuck.
- *
- * The allowlist is injectable so a test can assert genericity against a
- * hand-built table (e.g. prove impl-started reads as stuck the moment the
- * feature-lane steering events are treated as uncalled — the check that would
- * have caught this epic's "steering is dead code" defect before it was fixed).
- *
- * @param {TaskState} state
- * @param {{ fireableEvents?: Iterable<GateEvent> }} [opts]  Override the caller
- *   allowlist (defaults to {@link FIREABLE_EVENTS}). {@link HUMAN_APPROVAL_GATES}
- *   is always consulted — a human phrase does not go away because a test narrowed
- *   the event allowlist.
- * @returns {boolean}
- */
-export function isUserStuck(state, opts = {}) {
-  const gate = /** @type {WorkflowGate} */ (state.workflowGate);
-  const lane = /** @type {Lane} */ (state.lane);
-
-  // A human approval phrase advances this gate through a bare gate-edge that no
-  // event names — a legitimate path forward the event allowlist cannot express.
-  if (HUMAN_APPROVAL_GATES.has(gate)) return false;
-
-  // No legal successor at all ⇒ terminal (done/abandoned): a legitimate end.
-  if (legalTransitions(lane, gate).length === 0) return false;
-
-  const fireable = opts.fireableEvents ? new Set(opts.fireableEvents) : FIREABLE_EVENTS;
-  const anyFireable = legalEventsFrom(lane, gate).some((event) => fireable.has(event));
-  return !anyFireable;
-}
-
-/**
- * Build a realistic `runSubagent` PostToolUse payload for a subagent's return,
- * in the shape the host actually delivers
- * (test/fixtures/hook-payloads/captured/posttooluse.run-subagent.json):
- * `tool_name` is `runSubagent`, `tool_input` is the elided literal `"..."`, and
- * `tool_response` is the agent's final CHAT TEXT — prose FOLLOWED BY the embedded
- * JSON contract, which is where `lib/hooks/agent-result.mjs` reads the agent's
- * identity and result from. The prose-before-JSON shape is deliberate: a bare
- * JSON string would dodge the harder path `extractEmbeddedJson` must handle.
- *
- * The embedded contract carries `agentName` (the identity channel the real hook
- * uses when the host index has no entry). The `agentName` argument is the
- * default; a matching key inside `returnBody` overrides it.
- *
- * @param {string} agentName            Agent whose return this simulates (e.g. 'router').
- * @param {unknown} returnBody          The agent's contract object (its typed return).
- * @param {{ toolUseId?: string }} [opts]
- * @returns {Record<string, unknown>}
- */
-export function subagentReturnPayload(agentName, returnBody, opts = {}) {
-  const body =
-    returnBody !== null && typeof returnBody === 'object' && !Array.isArray(returnBody)
-      ? /** @type {Record<string, unknown>} */ (returnBody)
-      : { value: returnBody };
-  const embedded = { agentName, ...body };
-  const toolUseId = opts.toolUseId ?? `toolu_${agentName}_1__vscode-1783942732395`;
-
-  // Keys mirror the captured fixture exactly (structural-shape contract). `cwd`
-  // is a placeholder — replaySession/rebase overwrites it with the workspace's
-  // own `.devmate/` before the payload reaches a hook.
-  return {
-    timestamp: DEFAULT_CLOCK,
-    hook_event_name: 'PostToolUse',
-    session_id: DEFAULT_SESSION_ID,
-    transcript_path: '.devmate/state/transcript.jsonl',
-    tool_name: 'runSubagent',
-    tool_input: '...',
-    tool_response: `Returning the ${agentName} contract.\n\n${JSON.stringify(embedded)}`,
-    tool_use_id: toolUseId,
-    cwd: HOST_CWD_REL,
-  };
-}
-
-/**
- * One turn in a scripted session: a user prompt, followed by zero or more
- * tool-call / subagent-return steps, in order.
- * @typedef {Object} Turn
- * @property {string} prompt                 UserPromptSubmit prompt text.
- * @property {ToolStep[]} [tools]            Tool calls / returns after the prompt, in order.
- * @property {TurnExpectation} [expect]      Assertions to run once this turn's events have replayed.
- */
-
-/**
- * One PreToolUse/PostToolUse pair, or a subagent dispatch+return trio.
- * @typedef {Object} ToolStep
- * @property {string} toolName                        Host tool name for an ordinary call, or — when
- *                                                    `subagentReturn` is set — the subagent's name.
- * @property {Record<string, unknown>} [toolInput]    tool_input for an ordinary PreToolUse/PostToolUse pair.
- * @property {unknown} [subagentReturn]               When present, this step is a subagent dispatch+return:
- *                                                    a SubagentStart, then a PostToolUse built by
- *                                                    {@link subagentReturnPayload}, then a SubagentStop.
- */
-
-/**
- * Assertion made after a turn's events have replayed.
- * @typedef {Object} TurnExpectation
- * @property {WorkflowGate} [gate]                Expected `workflowGate` after this turn.
- * @property {boolean} [notStuck]                 When true, assert `isUserStuck(stateAfter) === false`.
- * @property {(ctx: TurnResult) => void} [assert] Free-form assertion callback.
- */
-
-/**
- * What a single turn produced: every hook subprocess result it ran, the task
- * state as it stood at the end of the turn, and the gate that state names.
- * @typedef {Object} TurnResult
- * @property {string} prompt                                                    The turn's prompt.
- * @property {{ script: string, status: number, stdout: string, stderr: string }[]} hookOutputs
- *   Every hook invocation for every event this turn fired, in order.
- * @property {TaskState|null} stateAfter                                        Persisted task state, or null.
- * @property {WorkflowGate|null} gate                                           `stateAfter.workflowGate`, or null.
- */
-
-/**
- * Replay a full scripted session turn-by-turn through the real hooks, stamping a
- * deterministic clock on every event this driver builds, and return one
- * {@link TurnResult} per turn. A `SessionStart` is fired once up front so the
- * session bootstraps its own task.json — nothing is pre-seeded.
- *
- * The injected clock governs the timestamps/ids the harness stamps on its
- * payloads (so a script replays byte-identically); a hook's own `new Date()`
- * for its trace `ts` runs inside the subprocess and is out of the harness's
- * reach — honestly, not injected.
- *
- * When a turn carries `expect`, its assertions run against that turn's result
- * before the next turn begins, so a failure points at the exact turn.
- *
+ * Replay a scripted session turn-by-turn through the REAL hooks and return one
+ * {@link TurnResult} per turn. Bootstraps its own task state with a SessionStart
+ * (which also marks the session devmate-scoped, so enforcement is live), then for
+ * each turn fires the UserPromptSubmit followed by its tool steps in order, and
+ * reads the state that landed. Every payload the driver authors is stamped with
+ * the injected clock (`opts.now`, default {@link DEFAULT_CLOCK}) so timestamp-based
+ * assertions stay deterministic; hook-internal clocks are per-module and already
+ * deterministic or injected.
  * @param {Turn[]} turns
  * @param {{ hostCwd: string, root: string, now?: () => string }} opts
  * @returns {Promise<TurnResult[]>}
@@ -460,111 +527,45 @@ export async function runSession(turns, opts) {
   const { hostCwd, root } = opts;
   const now = opts.now ?? (() => DEFAULT_CLOCK);
 
-  // Bootstrap: SessionStart writes task.json (scripts/session-start.mjs). Nothing
-  // under state/ is seeded — the session must create its own.
-  replaySession(
-    [{ hook_event_name: 'SessionStart', session_id: DEFAULT_SESSION_ID, source: 'new', timestamp: now() }],
-    hostCwd,
-  );
+  // Bootstrap: the first SessionStart writes task.json and marks the session.
+  startSession(hostCwd, DEFAULT_SESSION_ID, { source: 'new' });
 
   /** @type {TurnResult[]} */
-  // @bounded-alloc — one entry per scripted turn.
+  // @bounded-alloc — one result per scripted turn.
   const results = [];
-
   for (let t = 0; t < turns.length; t++) {
     const turn = turns[t];
     /** @type {Record<string, unknown>[]} */
-    // @bounded-alloc — prompt + a few events per tool step in a single turn.
-    const events = [{ hook_event_name: 'UserPromptSubmit', session_id: DEFAULT_SESSION_ID, prompt: turn.prompt, timestamp: now() }];
-
-    const tools = turn.tools ?? [];
-    for (let s = 0; s < tools.length; s++) {
-      const step = tools[s];
-      const agentId = `toolu_t${t}s${s}`;
-      const toolUseId = `${agentId}__vscode-1`;
-
+    // @bounded-alloc — the events one turn authors (a prompt plus its tool steps).
+    const events = [
+      { hook_event_name: 'UserPromptSubmit', session_id: DEFAULT_SESSION_ID, prompt: turn.prompt, timestamp: now() },
+    ];
+    const steps = turn.tools ?? [];
+    for (let s = 0; s < steps.length; s++) {
+      const step = steps[s];
       if (step.subagentReturn !== undefined) {
-        // A subagent dispatch+return: SubagentStart names the agent (the host's
-        // identity channel), the PostToolUse carries its contract, SubagentStop
-        // closes it — the exact trio a real dispatch emits.
-        events.push({
-          hook_event_name: 'SubagentStart',
-          session_id: DEFAULT_SESSION_ID,
-          agent_id: agentId,
-          agent_type: step.toolName,
-          timestamp: now(),
-        });
-        events.push(subagentReturnPayload(step.toolName, step.subagentReturn, { toolUseId }));
-        events.push({
-          hook_event_name: 'SubagentStop',
-          session_id: DEFAULT_SESSION_ID,
-          agent_id: agentId,
-          agent_type: step.toolName,
-          timestamp: now(),
-        });
+        // Deterministic per-step agent id so its return links to its start.
+        const agentId = `toolu_t${t}s${s}`;
+        for (const ev of subagentDispatch(agentId, step.toolName, step.subagentReturn)) {
+          events.push({ ...ev, timestamp: now() });
+        }
       } else {
-        // An ordinary tool call: the PreToolUse/PostToolUse pair the host fires.
-        const toolInput = step.toolInput ?? {};
-        events.push({
-          hook_event_name: 'PreToolUse',
-          session_id: DEFAULT_SESSION_ID,
-          tool_name: step.toolName,
-          tool_input: toolInput,
-          tool_use_id: toolUseId,
-          timestamp: now(),
-        });
-        events.push({
-          hook_event_name: 'PostToolUse',
-          session_id: DEFAULT_SESSION_ID,
-          tool_name: step.toolName,
-          tool_input: toolInput,
-          tool_response: '',
-          tool_use_id: toolUseId,
-          timestamp: now(),
-        });
+        events.push(
+          { hook_event_name: 'PreToolUse', session_id: DEFAULT_SESSION_ID, tool_name: step.toolName, tool_input: step.toolInput ?? {}, timestamp: now() },
+          { hook_event_name: 'PostToolUse', session_id: DEFAULT_SESSION_ID, tool_name: step.toolName, tool_input: step.toolInput ?? {}, tool_response: '', timestamp: now() },
+        );
       }
     }
 
-    const hookOutputs = replaySession(events, hostCwd);
+    const ran = replaySession(events, hostCwd);
     const stateAfter = readStateOrNull(root);
-    /** @type {TurnResult} */
-    const result = {
+    results.push({
       prompt: turn.prompt,
-      hookOutputs,
+      ran,
       stateAfter,
       gate: stateAfter ? /** @type {WorkflowGate} */ (stateAfter.workflowGate) : null,
-    };
-    results.push(result);
-
-    if (turn.expect) applyTurnExpectation(turn.expect, result);
+      stuck: stateAfter ? isUserStuck(stateAfter) : false,
+    });
   }
-
   return results;
-}
-
-/**
- * Apply a {@link TurnExpectation} to a {@link TurnResult}, failing the test at
- * the exact turn when it does not hold.
- * @param {TurnExpectation} expect
- * @param {TurnResult} result
- * @returns {void}
- */
-function applyTurnExpectation(expect, result) {
-  if (expect.gate !== undefined) {
-    assert.equal(
-      result.gate,
-      expect.gate,
-      `after turn "${result.prompt}": expected gate ${expect.gate}, got ${result.gate}\n` +
-        result.hookOutputs.map((r) => `  [${r.script}] ${r.stdout}${r.stderr}`).join('\n'),
-    );
-  }
-  if (expect.notStuck) {
-    assert.ok(result.stateAfter, `after turn "${result.prompt}": no task state to check for stuck-ness`);
-    assert.equal(
-      isUserStuck(result.stateAfter),
-      false,
-      `after turn "${result.prompt}": the user is stuck at gate ${result.gate} — no runtime caller can advance it`,
-    );
-  }
-  if (expect.assert) expect.assert(result);
 }

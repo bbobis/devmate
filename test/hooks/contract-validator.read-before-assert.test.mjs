@@ -13,6 +13,13 @@ import { runWithIO } from '../../hooks/contract-validator.mjs';
 import { parseJsonl } from '../../lib/json-io.mjs';
 import { verifyPointer } from '../../lib/context/evidence-pack.mjs';
 
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-cv-read');
+
 /**
  * Build a workspace with a grill artifact carrying the given pointers.
  * @param {Array<Record<string, unknown>>} pointers
@@ -56,6 +63,7 @@ async function runHook(root, artifactPath) {
   // #77: the real wire shape — `create_file` + `tool_input.filePath` + `cwd`.
   const payload = {
     hook_event_name: 'PostToolUse',
+    session_id: TEST_SESSION_ID,
     tool_name: 'create_file',
     tool_input: { filePath: artifactPath },
     cwd: root,

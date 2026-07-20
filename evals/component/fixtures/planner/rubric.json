@@ -1,0 +1,10 @@
+{
+  "_comment": "Expected-output rubric for the planner component eval (E16-4). requiredAcs = acceptance criteria a correct plan MUST map to a planned test — an AC is 'mapped' when it appears in some task's ac[] AND that task carries a non-empty tddApproach. missing = unmapped ACs. spurious = ACs a task claims that the rubric does not require. Thresholds are provisional — calibrate after the first baseline run (see docs/PATTERNS.md P7).",
+  "requiredAcs": [
+    "Plan artifact is persisted to plan.json",
+    "Each task carries a TDD approach",
+    "Assumptions are tagged [UNVERIFIED]"
+  ],
+  "passThreshold": 0.8,
+  "expectedGoodScore": 1
+}

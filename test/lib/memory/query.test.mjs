@@ -232,6 +232,34 @@ test('queryMemory — stale check flags changed and missing files, never edit fa
   assert.equal(bySource.get('lib/other.mjs')?.stale, undefined);
 });
 
+test('#148 queryMemory — a discovery fact stays FRESH across a CRLF/LF re-checkout of identical content', async () => {
+  const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'mq-eol-'));
+  await fsp.mkdir(path.join(repoRoot, 'lib'), { recursive: true });
+  // Write the fact from an LF checkout.
+  await fsp.writeFile(path.join(repoRoot, 'lib/x.mjs'), 'export const a = 1;\nexport const b = 2;\n');
+  const res = await writeDiscoveryFacts({
+    taskId: 'task-1',
+    lane: 'feature',
+    repoRoot,
+    mergedArtifact: {
+      agentName: 'discovery',
+      claims: [{ fact: 'stays fresh across EOL', path: 'lib/x.mjs', confidence: 'high' }],
+      unverified: [],
+    },
+  });
+  assert.equal(res.ok, true);
+  // Simulate a CRLF checkout of the SAME logical content (git `text=auto eol=lf`
+  // means checkouts legitimately differ by line ending). Pre-#148 this made the
+  // digest mismatch → false-stale → the fact silently dropped from recall.
+  await fsp.writeFile(path.join(repoRoot, 'lib/x.mjs'), 'export const a = 1;\r\nexport const b = 2;\r\n');
+
+  const r = await queryMemory(res.ledgerPath, { topN: 10 }, { staleCheckRoot: repoRoot });
+  assert.equal(r.ok, true);
+  const m = r.matches.find((x) => x.source === 'lib/x.mjs');
+  assert.ok(m, 'the discovery fact is recalled');
+  assert.equal(m.stale, false, 'a CRLF re-checkout of identical content must NOT be false-stale');
+});
+
 test('queryMemory — stale check never reads outside the root (traversal source is stale)', async () => {
   const parent = mkdtempSync(path.join(os.tmpdir(), 'mq-traverse-'));
   const repoRoot = path.join(parent, 'repo');
@@ -260,4 +288,25 @@ test('queryMemory — no stale annotation without staleCheckRoot (opt-in IO)', a
   const p = await writeLedger(rows);
   const r = await queryMemory(p, { topN: 10 });
   assert.equal(r.matches[0].stale, undefined);
+});
+
+// ── #150: opt-in kind filter restricts recall to semantic discovery facts ──────
+
+test('#150 queryMemory — opts.kind "discovery" returns only discovery facts; default unchanged', async () => {
+  const p = await writeLedger([
+    fact({ source: 'src/a.mjs', ts: 1, tool: 'discovery-merge', summary: 'a semantic claim', contentDigest: 'abcd1234abcd1234' }),
+    fact({ source: 'src/b.mjs', ts: 2, tool: 'edit', summary: 'edit edited src/b.mjs' }),
+  ]);
+
+  // Default: both facts recalled (edit events stay queryable locally).
+  const all = await queryMemory(p, { topN: 10 });
+  assert.equal(all.matches.length, 2, 'default recall is unchanged');
+
+  // kind filter: only the discovery fact.
+  const discoveryOnly = await queryMemory(p, { topN: 10 }, { kind: 'discovery' });
+  assert.equal(discoveryOnly.matches.length, 1);
+  assert.equal(discoveryOnly.matches[0].source, 'src/a.mjs');
+  assert.equal(discoveryOnly.matches[0].kind, 'discovery');
+  // totalActive is the scan metric, not the match count — the filter doesn't shrink it.
+  assert.equal(discoveryOnly.totalActive, 2);
 });

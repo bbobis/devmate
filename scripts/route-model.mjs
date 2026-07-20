@@ -35,6 +35,8 @@ import { readTextFile } from '../lib/fs-safe.mjs';
 import { writeJsonFileAtomic } from '../lib/json-io.mjs';
 import { getOwn } from '../lib/object-utils.mjs';
 import { KNOWN_MODEL_ROLES, loadModelPolicy, routeModel, routeWorkerModel } from '../lib/routing/model-policy.mjs';
+import { chooseModelTier, deriveDifficulty } from '../lib/routing/model-route.mjs';
+import { createPassThroughGateway } from '../lib/routing/model-gateway.mjs';
 import { assertRoleRouteAllowed, assertRouteAllowed } from '../lib/routing/policy-guard.mjs';
 import { appendTraceEvent } from '../lib/trace/append.mjs';
 
@@ -54,24 +56,59 @@ const DEFAULT_TASK_STATE = '.devmate/state/task.json';
 const BUDGET_CLASSES = Object.freeze(['tiny', 'standard', 'large']);
 
 /**
- * Read the persisted budget class + taskId from TaskState. Falls back to
- * `standard` with a distinct unclassified note (never crashes) when the state
- * or contract is absent — mirroring check-session-budget's stance.
+ * Read the persisted budget class, lane, taskId, and spec-AC count (the #217
+ * fallback difficulty signal) from TaskState. Falls back to `standard` with a
+ * distinct unclassified note (never crashes) when the state or contract is
+ * absent — mirroring check-session-budget's stance.
  * @param {string} taskStatePath
- * @returns {Promise<{ budgetClass: BudgetClass, taskId: string|null, classified: boolean, reason: string }>}
+ * @returns {Promise<{ budgetClass: BudgetClass, lane: string, stateAcCount: number, taskId: string|null, classified: boolean, reason: string }>}
  */
 async function readBudgetClass(taskStatePath) {
   try {
     const state = JSON.parse(await readTextFile(taskStatePath));
     const cls = state?.outputContract?.token_budget_class;
     const taskId = typeof state?.taskId === 'string' && state.taskId !== '' ? state.taskId : null;
+    const lane = typeof state?.lane === 'string' && state.lane !== '' ? state.lane : 'unknown';
+    // #217: the spec's acceptance criteria (persisted by spec-writer) are a real
+    // difficulty signal — but they only exist AFTER route-model runs, so this is
+    // the FALLBACK; the primary signal is the approved plan's AC count (see
+    // readPlanAcCount), which is present at route-model's plan-approved invocation.
+    const stateAcCount = Array.isArray(state?.acceptanceCriteria) ? state.acceptanceCriteria.length : 0;
     if (typeof cls === 'string' && BUDGET_CLASSES.includes(cls)) {
-      return { budgetClass: /** @type {BudgetClass} */ (cls), taskId, classified: true, reason: '' };
+      return { budgetClass: /** @type {BudgetClass} */ (cls), lane, stateAcCount, taskId, classified: true, reason: '' };
     }
-    return { budgetClass: 'standard', taskId, classified: false, reason: 'no token_budget_class on the persisted OutputContract' };
+    return { budgetClass: 'standard', lane, stateAcCount, taskId, classified: false, reason: 'no token_budget_class on the persisted OutputContract' };
   } catch (/** @type {unknown} */ err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { budgetClass: 'standard', taskId: null, classified: false, reason: `task state unreadable (${msg})` };
+    return { budgetClass: 'standard', lane: 'unknown', stateAcCount: 0, taskId: null, classified: false, reason: `task state unreadable (${msg})` };
+  }
+}
+
+/**
+ * Count acceptance criteria from the APPROVED PLAN — the real difficulty signal
+ * present at route-model's actual invocation point (`plan-approved`), where the
+ * spec's `state.acceptanceCriteria` does not exist yet. Reads
+ * `.devmate/session/<taskId>/plan.json` (a sibling of the state dir) and sums
+ * `tasks[].ac`. Returns 0 when the plan is absent/unreadable/malformed, so the
+ * caller degrades to the state fallback and then the budget-class proxy.
+ * @param {string} taskStatePath
+ * @param {string|null} taskId
+ * @returns {Promise<number>}
+ */
+async function readPlanAcCount(taskStatePath, taskId) {
+  if (taskId === null) return 0;
+  // state and session dirs are both children of `.devmate`.
+  const planPath = join(dirname(dirname(taskStatePath)), 'session', taskId, 'plan.json');
+  try {
+    const plan = JSON.parse(await readTextFile(planPath));
+    const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
+    let count = 0;
+    for (const task of tasks) {
+      if (Array.isArray(task?.ac)) count += task.ac.length;
+    }
+    return count;
+  } catch {
+    return 0;
   }
 }
 
@@ -85,7 +122,32 @@ export async function main(args, opts = {}) {
   const taskStatePath = args[0] || DEFAULT_TASK_STATE;
   const evalsDir = opts.evalsDir ?? DEFAULT_EVALS_DIR;
 
-  const { budgetClass, taskId, classified, reason } = await readBudgetClass(taskStatePath);
+  const { budgetClass, lane, stateAcCount, taskId, classified, reason } = await readBudgetClass(taskStatePath);
+  // #217: the real difficulty signal is the acceptance-criterion count. At
+  // route-model's plan-approved invocation the approved plan carries it (primary);
+  // the spec's state.acceptanceCriteria is a fallback for any later invocation;
+  // 0 → the budget-class proxy inside deriveDifficulty.
+  const planAcCount = await readPlanAcCount(taskStatePath, taskId);
+  const acCount = planAcCount > 0 ? planAcCount : stateAcCount;
+  // #27/#217: derive the advisory cost tier (cheap-vs-powerful) from the
+  // classified budget class + that difficulty signal, and route the decision
+  // through the model-gateway seam — the single place a future failover/cost-cap
+  // impl replaces. The gateway's record sink is the telemetry log (the tier rides
+  // the model_route event). Advisory metadata only.
+  let recordedTier = '';
+  let recordedTierReason = '';
+  const gateway = createPassThroughGateway({
+    record: (entry) => {
+      recordedTier = entry.tier;
+      recordedTierReason = entry.reason;
+    },
+  });
+  const decidedTier = chooseModelTier({
+    budgetClass,
+    difficulty: deriveDifficulty(budgetClass, acCount),
+    lane,
+  });
+  const { tier, reason: tierReason } = gateway.route(decidedTier, () => decidedTier);
   if (!classified) {
     process.stdout.write(
       `[route-model] unclassified session at ${taskStatePath} — ${reason}; ` +
@@ -128,9 +190,15 @@ export async function main(args, opts = {}) {
         verified: route.verified,
         mode: 'blocked',
         recommendedAt: new Date().toISOString(),
+        tier,
+        tierReason,
         ...(roleHints !== undefined ? { roles: roleHints } : {}),
       });
-      await traceRoute(taskId, taskStatePath, route, 'blocked', opts);
+      await traceRoute(taskId, taskStatePath, route, 'blocked', {
+        ...opts,
+        tier: recordedTier,
+        tierReason: recordedTierReason,
+      });
       return 1;
     }
   }
@@ -143,10 +211,16 @@ export async function main(args, opts = {}) {
     verified: route.verified,
     mode,
     recommendedAt: new Date().toISOString(),
+    tier,
+    tierReason,
     ...(roleHints !== undefined ? { roles: roleHints } : {}),
   };
   await writeHint(taskStatePath, hint);
-  await traceRoute(taskId, taskStatePath, route, mode, opts);
+  await traceRoute(taskId, taskStatePath, route, mode, {
+    ...opts,
+    tier: recordedTier,
+    tierReason: recordedTierReason,
+  });
 
   if (blockedRoles.length > 0) {
     // The blocked role hint is already durable (mode 'blocked' in the hint
@@ -219,7 +293,7 @@ async function writeHint(taskStatePath, hint) {
  * @param {string} taskStatePath
  * @param {import('../lib/types.mjs').PolicyRoute} route
  * @param {string} mode
- * @param {{ traceRoot?: string }} opts
+ * @param {{ traceRoot?: string, tier?: string, tierReason?: string }} opts
  * @returns {Promise<void>}
  */
 async function traceRoute(taskId, taskStatePath, route, mode, opts) {
@@ -238,6 +312,10 @@ async function traceRoute(taskId, taskStatePath, route, mode, opts) {
         budgetClass: route.budgetClass,
         modelId: route.modelId,
         mode,
+        // #27: the tier logged here comes from the gateway's record sink — the
+        // telemetry path a future gateway impl reuses without call-site changes.
+        ...(opts.tier !== undefined ? { tier: opts.tier } : {}),
+        ...(opts.tierReason !== undefined ? { tierReason: opts.tierReason } : {}),
       },
       { root: opts.traceRoot ?? resolveHookRoot() }
     );

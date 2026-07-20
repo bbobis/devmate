@@ -64,7 +64,10 @@ test("guardChoreReset — blocks /quick-task when lane=chore, gate=plan-approved
   const msg = guardChoreReset(makeState(), "/quick-task");
   assert.equal(typeof msg, "string");
   assert.match(/** @type {string} */ (msg), /Cannot run '\/quick-task'/);
-  assert.match(/** @type {string} */ (msg), /devmate-chore-continue/);
+  // #130: the block message names the real runtime phrases, not the phantom
+  // slash commands nothing could run.
+  assert.match(/** @type {string} */ (msg), /approve plan/);
+  assert.match(/** @type {string} */ (msg), /escalate chore to feature/);
 });
 
 test("guardChoreReset — blocks new-task under same conditions", () => {

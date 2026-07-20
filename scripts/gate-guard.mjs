@@ -4,12 +4,12 @@ import { readTextFileSync } from '../lib/fs-safe.mjs';
 import { assertNodeVersion, isMainModule } from '../lib/env-guard.mjs';
 import { resolveHookRoot } from '../lib/init/repo-root.mjs';
 import { resolve as resolvePath } from 'node:path';
-import { readTaskState, writeTaskState } from '../lib/task-state.mjs';
+import { readTaskState, mutateTaskStateUnderLock } from '../lib/task-state.mjs';
 import {
   loadDevmateConfig,
   resolveSessionArtifactPolicy,
 } from '../lib/config/devmate-config.mjs';
-import { readScopeForTask } from '../lib/workflow/scope.mjs';
+import { pathEscapesWorkspace, readScopeForTask } from '../lib/workflow/scope.mjs';
 import {
   isImplementationDispatch,
   evaluateImplementationDispatch,
@@ -27,9 +27,55 @@ import {
   INITIAL_TDD_GUARD,
 } from '../lib/gate-guard-core.mjs';
 import { firstToolInputPath, namedPaths } from '../lib/hooks/tool-input.mjs';
+import { auditAction } from '../lib/trace/audit-action.mjs';
+import { isDevmateSession } from '../lib/hooks/session-marker.mjs';
+import { getOwn, isPlainRecord } from '../lib/object-utils.mjs';
 
 /** @typedef {import('../lib/gate-guard-core.mjs').HookPayload} HookPayload */
 /** @typedef {import('../lib/gate-guard-core.mjs').GuardDecision} GuardDecision */
+/** @typedef {import('../lib/types.mjs').TaskState} TaskState */
+
+/**
+ * #6 deny telemetry: append one bounded, content-free audit line for a denied
+ * tool call, reusing the peer-hook trace path (auditAction → appendTraceEvent,
+ * as hooks/post-tool-use.mjs does).
+ *
+ * The event is a standard `action` entry: `actionType` marks the deny and its
+ * source layer (`dispatch` = the lane-gated implementation-dispatch check,
+ * `guard` = the rule ladder) plus the tool name, and `path` is the offending
+ * path. The digest auditAction stores is a hash of (path + actionType), so NO
+ * free-text reason and NO file content is ever persisted — the full reason
+ * already reached the host on stdout; the trace stays bounded (TCM-9).
+ *
+ * Honest taskless behavior: a deny with no readable task context (no task.json)
+ * has no task id to key a trace file on, so it writes nothing — the host deny
+ * still stands. Best-effort throughout: a failing or throwing audit must never
+ * block or crash the guard.
+ *
+ * @param {'dispatch'|'guard'} source
+ * @param {HookPayload} payload
+ * @param {TaskState|null} state
+ * @param {string} root  Absolute workspace root (resolveHookRoot).
+ * @returns {Promise<void>}
+ */
+async function auditDeny(source, payload, state, root) {
+  if (state === null) return;
+  const tool = payload.tool_name !== '' ? payload.tool_name : 'unknown';
+  const offendingPath =
+    typeof payload.path === 'string' && payload.path !== ''
+      ? payload.path
+      : Array.isArray(payload.namedPaths) && payload.namedPaths.length > 0
+        ? payload.namedPaths[0]
+        : '';
+  try {
+    await auditAction(
+      { taskId: state.taskId, stepId: `deny:${source}`, actionType: `deny:${source}:${tool}`, path: offendingPath },
+      { root },
+    );
+  } catch (_err) {
+    // Telemetry is diagnostics — never let it block or crash a deny.
+  }
+}
 
 /**
  * Reads all of stdin synchronously, returns as a UTF-8 string.
@@ -144,13 +190,11 @@ export async function main(_args) {
   try {
     rawInput = readStdinSync();
   } catch (_) {
+    // Cannot read the payload → cannot confirm a devmate session → allow.
+    // The never-block guarantee (§ session-marker.mjs) wins over fail-closed
+    // whenever devmate cannot positively identify the session as its own.
     process.stdout.write(
-      JSON.stringify(
-        toPreToolUseOutput({
-          decision: 'deny',
-          reason: 'Gate guard: failed to read hook payload from stdin.',
-        })
-      ) + '\n'
+      JSON.stringify(toPreToolUseOutput({ decision: 'allow' })) + '\n'
     );
     return 0;
   }
@@ -160,18 +204,41 @@ export async function main(_args) {
   try {
     parsed = JSON.parse(rawInput.trim() || '{}');
   } catch (_) {
+    // Malformed payload → session unidentifiable → allow (never-block).
     process.stdout.write(
-      JSON.stringify(
-        toPreToolUseOutput({
-          decision: 'deny',
-          reason: 'Gate guard: malformed JSON in hook payload.',
-        })
-      ) + '\n'
+      JSON.stringify(toPreToolUseOutput({ decision: 'allow' })) + '\n'
     );
     return 0;
   }
 
+  // Runtime scope: devmate hooks are registered plugin-level, so this fires in
+  // EVERY Copilot session. Enforce ONLY inside an active devmate workflow — one
+  // in which a devmate agent was dispatched, marked from SubagentStart's
+  // host-supplied agent_type (see lib/hooks/session-marker.mjs). Outside one,
+  // allow unconditionally BEFORE reading task.json, so a stray, stale, or
+  // half-written state file (e.g. a lane-less task.json) can never block a user
+  // who is not running devmate.
+  const sessionId = isPlainRecord(parsed) ? getOwn(parsed, 'session_id') : undefined;
   const payload = extractPayload(parsed);
+
+  // The ONE exception to "no marker ⇒ inert": an implementation dispatch
+  // (runSubagent → fullstack / a persona wrapper) is self-identifying as
+  // devmate — no plain-Copilot session ever dispatches an agent by those
+  // names — and it is the highest-risk gate (it starts a worker that writes
+  // code). It must be checked even on the FIRST dispatch of a session, before
+  // any SubagentStart has marked it; otherwise the orchestrator can spawn a
+  // worker at a pre-implementation gate and only the worker's own edit-denials
+  // stop it (observed: a worker started at `no-lane`, then thrashed against
+  // gate-guard for a minute). Checking it here restores the clean dispatch-time
+  // deny. It cannot block a real non-devmate session, which never issues such a
+  // dispatch. Reads, edits, and every other tool stay inert without a marker,
+  // preserving the never-block guarantee.
+  if (!isDevmateSession(sessionId) && !isImplementationDispatch(payload.agentName)) {
+    process.stdout.write(
+      JSON.stringify(toPreToolUseOutput({ decision: 'allow' })) + '\n'
+    );
+    return 0;
+  }
   // One root, resolved once from the payload, threaded into every read and
   // write below. Nothing in this hook may touch a cwd-relative .devmate/ path.
   const root = resolveHookRoot(payload);
@@ -210,12 +277,18 @@ export async function main(_args) {
     const tdd = evaluateTddPreCondition(payload.path, prev, testGlobs);
     const next = applyTddGuardTransition(prev, tdd, payload.path, testGlobs);
     if (next !== prev) {
-      try {
-        state = { ...state, tddGuard: next };
-        await writeTaskState(state, statePath);
-      } catch (_err) {
-        // Persistence is best-effort; never crash the hook.
-      }
+      // Update the in-memory state so THIS call's downstream decision sees the
+      // advanced counter, exactly as before.
+      state = { ...state, tddGuard: next };
+      // #112: persist atomically — the mutator merges the new tddGuard onto the
+      // FRESH in-lock state, so a concurrent gate advance is no longer clobbered
+      // by this best-effort counter write. Non-throwing: a missing task or lock
+      // failure is reported in the result, never crashes the hook.
+      await mutateTaskStateUnderLock(
+        (fresh) => ({ ...fresh, tddGuard: next }),
+        statePath,
+        { event: "tdd-guard" },
+      );
     }
   }
 
@@ -248,6 +321,7 @@ export async function main(_args) {
       diagnosisValid,
     });
     if (verdict.decision === 'denied') {
+      await auditDeny('dispatch', payload, state, root);
       process.stdout.write(
         JSON.stringify(
           toPreToolUseOutput({ decision: 'deny', reason: verdict.reason })
@@ -276,7 +350,16 @@ export async function main(_args) {
     sessionArtifactWriters: artifactPolicy.writers,
     activeAgent: active.agent,
     activeAgentAmbiguous: active.ambiguous,
+    // #187: resolve the edit target against the workspace root HERE (the pure
+    // evaluator may not do path I/O) and hand the verdict, so Rule 6 can deny an
+    // out-of-workspace edit that a fuzzy glob — incl. the test-glob floor — would
+    // otherwise authorize.
+    editEscapesWorkspace: pathEscapesWorkspace(root, payload.path ?? ''),
   });
+
+  if (decision.decision === 'deny') {
+    await auditDeny('guard', payload, state, root);
+  }
 
   process.stdout.write(JSON.stringify(toPreToolUseOutput(decision)) + '\n');
   return 0;

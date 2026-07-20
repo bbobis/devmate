@@ -333,3 +333,68 @@ describe('E2E — "approve plan" is inert when there is nothing to approve', () 
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// #130: "escalate chore to feature: <reason>" is reachable from a real prompt
+// ---------------------------------------------------------------------------
+
+describe('E2E — chore lane: the escalation phrase re-enters the feature lane (#130)', () => {
+  /** @type {ReturnType<typeof runLane>} */
+  let run;
+
+  before(() => {
+    run = runLane('chore', 'escalate chore to feature: scope grew beyond a mechanical edit');
+  });
+
+  after(() => {
+    if (run?.root) rmSync(run.root, { recursive: true, force: true });
+  });
+
+  it('exits 0 and switches the lane to feature at plan-approved, taskId preserved', () => {
+    for (const r of run.ran) {
+      assert.equal(r.status, 0, `${r.script} exited ${r.status}:\n${r.stdout}${r.stderr}`);
+    }
+    const state = readState(run.root);
+    assert.equal(state.lane, 'feature', 'the lane did not switch');
+    assert.equal(state.workflowGate, 'plan-approved', 'feature re-entry gate is plan-approved');
+  });
+
+  it('records the lane_transition audit entry with the verbatim reason', () => {
+    const transitions = readTraceEvents(join(run.root, '.devmate', 'state', 'transitions.jsonl'));
+    const lt = transitions.find((e) => e.event === 'lane_transition');
+    assert.ok(lt, `no lane_transition entry: ${JSON.stringify(transitions)}`);
+    assert.equal(lt?.from, 'chore');
+    assert.equal(lt?.to, 'feature');
+    assert.equal(lt?.reason, 'scope grew beyond a mechanical edit');
+  });
+
+  it('tells the model what happened on the model-visible channel', () => {
+    assert.ok(
+      run.output.includes('escalated to the feature lane'),
+      `the escalation is invisible to the model:\n${run.output}`,
+    );
+  });
+});
+
+describe('E2E — the escalation phrase without a reason refuses and says so (#130)', () => {
+  /** @type {ReturnType<typeof runLane>} */
+  let run;
+
+  before(() => {
+    run = runLane('chore', 'escalate chore to feature');
+  });
+
+  after(() => {
+    if (run?.root) rmSync(run.root, { recursive: true, force: true });
+  });
+
+  it('exits 0, leaves the chore lane untouched, and asks for a reason', () => {
+    for (const r of run.ran) {
+      assert.equal(r.status, 0, `a refused escalation must not crash the chat: ${r.stderr}`);
+    }
+    const state = readState(run.root);
+    assert.equal(state.lane, 'chore', 'the lane moved without a reason');
+    assert.equal(state.workflowGate, 'plan-approved');
+    assert.ok(run.output.includes('needs a reason'), `no model-visible ask:\n${run.output}`);
+  });
+});

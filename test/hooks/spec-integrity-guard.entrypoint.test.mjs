@@ -26,6 +26,13 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-spec-integrity-ep');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(__dirname, '..', '..', 'hooks', 'spec-integrity-guard.mjs');
 
@@ -102,6 +109,7 @@ test(
       const r = spawnHook(
         {
           hook_event_name: 'PostToolUse',
+          session_id: TEST_SESSION_ID,
           tool_name: 'replace_string_in_file',
           tool_input: { filePath: fx.specPath },
           cwd: fx.root,
@@ -130,6 +138,7 @@ test('spawned as a hook, an UNCHANGED spec leaves the gate alone', skipUnlessNod
     const r = spawnHook(
       {
         hook_event_name: 'PostToolUse',
+        session_id: TEST_SESSION_ID,
         tool_name: 'replace_string_in_file',
         tool_input: { filePath: fx.specPath },
         cwd: fx.root,
@@ -150,6 +159,7 @@ test('a write to an unrelated file is a no-op', skipUnlessNode(24), () => {
     const r = spawnHook(
       {
         hook_event_name: 'PostToolUse',
+        session_id: TEST_SESSION_ID,
         tool_name: 'replace_string_in_file',
         tool_input: { filePath: join(fx.root, 'lib', 'unrelated.mjs') },
         cwd: fx.root,
@@ -195,6 +205,7 @@ test('the root is climbed out of .devmate — not anchored on a bare cwd', skipU
     const r = spawnHook(
       {
         hook_event_name: 'PostToolUse',
+        session_id: TEST_SESSION_ID,
         tool_name: 'replace_string_in_file',
         tool_input: { filePath: fx.specPath },
         cwd: devmateDir,

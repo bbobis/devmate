@@ -21,6 +21,7 @@ import { skipUnlessNode } from '../../lib/test-utils/node-guard.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { withMarkedSession } from '../../lib/test-utils/hook-session.mjs';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -94,18 +95,22 @@ function runGuardWithPayloadOfAtLeast(bytes, root) {
     cwd: root,
     tool_input: { filePath: 'README.md', prompt: 'x'.repeat(bytes) },
   };
-  const input = JSON.stringify(payload);
-  assert.ok(input.length > bytes, 'test payload must exceed the requested size');
+  // Marked so the oversized payload traverses the full parse+eval path, not the
+  // inert session-scope bail-out (this test is about buffer parsing, not scope).
+  return withMarkedSession(payload, (marked) => {
+    const input = JSON.stringify(marked);
+    assert.ok(input.length > bytes, 'test payload must exceed the requested size');
 
-  const result = spawnSync('node', [SCRIPT], { input, encoding: 'utf8', timeout: 10000 });
-  assert.equal(result.status, 0, `hook must exit 0, got ${result.status}: ${result.stderr}`);
+    const result = spawnSync('node', [SCRIPT], { input, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, `hook must exit 0, got ${result.status}: ${result.stderr}`);
 
-  const parsed = JSON.parse((result.stdout ?? '').trim());
-  const hso = parsed.hookSpecificOutput ?? {};
-  return {
-    decision: String(hso.permissionDecision ?? ''),
-    reason: String(hso.permissionDecisionReason ?? ''),
-  };
+    const parsed = JSON.parse((result.stdout ?? '').trim());
+    const hso = parsed.hookSpecificOutput ?? {};
+    return {
+      decision: String(hso.permissionDecision ?? ''),
+      reason: String(hso.permissionDecisionReason ?? ''),
+    };
+  });
 }
 
 test(

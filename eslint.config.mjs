@@ -170,6 +170,26 @@ export default [
     files: ["test/**/*.mjs", "evals/**/*.mjs"],
     rules: {
       "security/detect-non-literal-fs-filename": "off",
+
+      // PLATFORM PARITY, not a coverage decision. secure-coding already skips
+      // test files by design ("bracket access in tests is universally safe —
+      // fixture data, assertion helpers, mock objects"), but it detects them
+      // with POSIX-only regexes:
+      //
+      //   /\.test\.[mc]?[jt]sx?$/ || /\/__tests__\// || /\/test\// || ...
+      //
+      // The `/\/test\//` arm never matches on Windows, where context.filename
+      // is `C:\dev\work\devmate\test\e2e\x.mjs`. So a helper under test/ that
+      // is NOT named *.test.mjs (matrix-generator.mjs, session-harness.mjs)
+      // reports violations on Windows that Linux CI never sees — `npm run lint`
+      // is red locally and green in CI, breaking both the cross-platform
+      // constraint and CLAUDE.md's "green locally means a green PR".
+      //
+      // Turning it off here loses NOTHING: on CI the rule is already skipped
+      // for every one of these files. It only makes the existing behaviour
+      // explicit and identical on all three platforms. Production code
+      // (lib/, scripts/, hooks/) keeps the rule fully armed.
+      "secure-coding/detect-object-injection": "off",
     },
   },
 ];

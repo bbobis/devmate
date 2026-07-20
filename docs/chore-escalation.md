@@ -13,8 +13,16 @@ deterministic, gated paths instead of silently editing source code.
 
 Use when the work is genuinely bigger than a chore.
 
-- **Phrase:** `escalate chore to feature`
-- **Script:** `node scripts/escalate-chore.mjs --reason "<why>"`
+- **Phrase (the runtime path, #130):** `escalate chore to feature: <reason>` —
+  handled by the UserPromptSubmit approval listener (`hooks/approval-listener.mjs`),
+  which calls `escalateChoreToFeature` directly. The reason is required; the
+  bare phrase gets a model-visible ask instead of firing. A non-chore lane or
+  unreadable state degrades to a model-visible message — the phrase never
+  throws.
+- **Manual/recovery CLI:** `node scripts/escalate-chore.mjs --reason "<why>"` —
+  for a human at a terminal; the orchestrator (which owns the workflow)
+  declares no execute tool, and no hook, skill, or agent instruction wires
+  this script at runtime.
 - **Effect:** lane `chore -> feature`, gate set to `plan-approved`, `taskId` preserved.
 - **Trace:** appends a `lane_transition` event to `transitions.jsonl`.
 
@@ -53,7 +61,7 @@ Validation rules:
 1. Chore: "bump the retry config".
 2. Guard blocks an edit to `src/app/logic.mjs` (logic change).
 3. Either:
-   - `node scripts/escalate-chore.mjs --reason "retry needs a real fix"` — go full feature, or
+   - type `escalate chore to feature: retry needs a real fix` — go full feature, or
    - `approved exception: fix off-by-one in retry counter for src/app/logic.mjs` — narrow fix.
 
 ## Source

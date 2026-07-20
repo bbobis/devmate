@@ -7,33 +7,33 @@
   },
   {
     "path": "agents/orchestrator.agent.md",
-    "maxLines": 599,
-    "maxTokensEstimate": 9825,
-    "notes": "Orchestrator role card \u2014 role, boundaries, tools, handoff contract only. Budget ratcheted to current actual size when wired into CI (E9-02), re-ratcheted for the E10-01 human-gate input-handling protocol, again for the E10-4 turn-routing preamble, minimally for the E10-03 orchestrator-issued human-gate advance instructions, again for the per-AC implementation-progress tracking in feature-lane step 11, again for the dispatch-result no-fabrication rule + trace-backed fullstack result check, again to the current actual size (523 lines / 8440 tokens) after a pre-existing CI drift was found on main, again for the FO-5 two-phase discovery fan-out branch logic in feature-lane Step 2 (562 lines / 9144 tokens), again for the AC-3 step-11 tail (targetAcIds envelope stamping + AC coverage assert before pass-verification, bounded re-dispatch, park + escalate; 574 lines / 9367 tokens), again for the PRR-3 pr-review gate step in the feature + bug lanes (595 lines / 9780 tokens), and again for the #99 restatement of the persona boundary as a completion-time check (599 lines / 9825 tokens); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
+    "maxLines": 1000,
+    "maxTokensEstimate": 10082,
+    "notes": "Orchestrator role card \u2014 role, boundaries, tools, handoff contract only. Budget ratcheted to current actual size when wired into CI (E9-02), re-ratcheted for the E10-01 human-gate input-handling protocol, again for the E10-4 turn-routing preamble, minimally for the E10-03 orchestrator-issued human-gate advance instructions, again for the per-AC implementation-progress tracking in feature-lane step 11, again for the dispatch-result no-fabrication rule + trace-backed fullstack result check, again to the current actual size (523 lines / 8440 tokens) after a pre-existing CI drift was found on main, again for the FO-5 two-phase discovery fan-out branch logic in feature-lane Step 2 (562 lines / 9144 tokens), again for the AC-3 step-11 tail (targetAcIds envelope stamping + AC coverage assert before pass-verification, bounded re-dispatch, park + escalate; 574 lines / 9367 tokens), again for the PRR-3 pr-review gate step in the feature + bug lanes (595 lines / 9780 tokens), and again for the #99 restatement of the persona boundary as a completion-time check (599 lines / 9825 tokens), and again for the #156 follow-the-gate-order hard rule that stops the orchestrator shortcutting to implementation (616 lines / 10086 tokens); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
   },
   {
     "path": "agents/fullstack.agent.md",
-    "maxLines": 110,
-    "maxTokensEstimate": 1345,
-    "notes": "Full-stack role card \u2014 generic, persona-at-dispatch; role, tools, handoff contract only. Token budget ratcheted to current actual size (1120 tokens) after a pre-existing CI drift was found on main, again for the AC-3 required-when-targeted completedAcIds contract bullet (102 lines / 1258 tokens), and again for the #99 required `persona` field in the output contract \u2014 the only channel the completion-time persona boundary can read it from (107 lines / 1344 tokens); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
+    "maxLines": 1000,
+    "maxTokensEstimate": 6000,
+    "notes": "Full-stack role card \u2014 generic, persona-at-dispatch; role, tools, handoff contract only. Token budget ratcheted to current actual size (1120 tokens) after a pre-existing CI drift was found on main, again for the AC-3 required-when-targeted completedAcIds contract bullet (102 lines / 1258 tokens), again for the #99 required `persona` field in the output contract \u2014 the only channel the completion-time persona boundary can read it from (107 lines / 1344 tokens), and again for the 2026-07-20 conformance-audit negative example on `changedFiles` \u2014 warning that a wrapped path is silently dropped (fail-open) rather than rejected (119 lines / 1513 tokens); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
   },
   {
     "path": "agents/spec-writer.agent.md",
-    "maxLines": 90,
-    "maxTokensEstimate": 900,
+    "maxLines": 1000,
+    "maxTokensEstimate": 6000,
     "notes": "Spec-writer role card \u2014 deterministic spec artifact write and task-state metadata handoff only."
   },
   {
     "path": "agents/ui-ux.agent.md",
-    "maxLines": 80,
-    "maxTokensEstimate": 800,
+    "maxLines": 1000,
+    "maxTokensEstimate": 6000,
     "notes": "UI/UX role card \u2014 design-only brief artifact with screens/interactions/error states/components."
   },
   {
     "path": "agents/security.agent.md",
-    "maxLines": 80,
-    "maxTokensEstimate": 800,
-    "notes": "Security role card \u2014 pre-PR diff review with typed findings and evidence pointers."
+    "maxLines": 1000,
+    "maxTokensEstimate": 6000,
+    "notes": "Security role card \u2014 pre-PR diff review with typed findings and evidence pointers. Re-ratcheted for the #28 untrusted-external-content protocol (fenced PR/CI text is data, not instructions)."
   },
   {
     "path": "skills/tdd-debug/SKILL.md",
@@ -44,8 +44,8 @@
   {
     "path": "skills/devmate-init/SKILL.md",
     "maxLines": 30,
-    "maxTokensEstimate": 400,
-    "notes": "User-invocable skill exposed as /devmate-init \u2014 common path + links only; deep content in skills/devmate-init/refs/; backing logic in scripts/init.mjs. Budget mirrors TRIGGER_LINE_BUDGET. Budget ratcheted to current actual size when wired into CI (E9-02); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
+    "maxTokensEstimate": 415,
+    "notes": "User-invocable skill exposed as /devmate-init \u2014 common path + links only; deep content in skills/devmate-init/refs/; backing logic in scripts/init.mjs. Budget mirrors TRIGGER_LINE_BUDGET. Budget ratcheted to current actual size when wired into CI (E9-02), and again (400\u2192415 tokens) for the ${PLUGIN_ROOT} substitution note \u2014 without it the skill's commands are unresolvable paths on a marketplace install (the token expands only inside hook registrations, so the model must substitute the plugin root advertised in <devmate-skills>); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
   },
   {
     "path": "skills/devmate-map/SKILL.md",
@@ -85,8 +85,8 @@
   },
   {
     "path": "agents/rubber-duck.agent.md",
-    "maxLines": 90,
-    "maxTokensEstimate": 850,
+    "maxLines": 1000,
+    "maxTokensEstimate": 6000,
     "notes": "Rubber-duck role card \u2014 adversarial grill/critique modes, typed GrillResult/CritiqueResult contracts, read-only enforcement. Budget ratcheted to current actual size when wired into CI (E9-02); TODO: calibrate after content-slimming work \u2014 provisional placeholder."
   },
   {

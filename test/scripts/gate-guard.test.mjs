@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { withMarkedSession } from '../../lib/test-utils/hook-session.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(__dirname, '..', '..', 'scripts', 'gate-guard.mjs');
@@ -43,20 +44,25 @@ function parseDecision(stdout) {
  * @returns {{ stdout: string, stderr: string, status: number|null }}
  */
 function runGuard(stdinObj, cwd) {
-  const result = spawnSync('node', [SCRIPT], {
-    input: JSON.stringify(stdinObj),
-    cwd: cwd ?? process.cwd(),
-    encoding: 'utf8',
-    timeout: 10000,
+  // Enforcement is session-scoped: gate-guard is inert unless the session is a
+  // devmate workflow. These tests exercise the ENFORCEMENT path, so they run
+  // inside a marked session (see lib/test-utils/hook-session.mjs).
+  return withMarkedSession(stdinObj, (payload) => {
+    const result = spawnSync('node', [SCRIPT], {
+      input: JSON.stringify(payload),
+      cwd: cwd ?? process.cwd(),
+      encoding: 'utf8',
+      timeout: 10000,
+    });
+    return {
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      status: result.status,
+    };
   });
-  return {
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    status: result.status,
-  };
 }
 
-test('gate-guard.mjs - malformed stdin JSON exits 0, stdout is deny', skipUnlessNode(24), () => {
+test('gate-guard.mjs - malformed stdin JSON exits 0, stdout is allow (cannot confirm devmate → never-block)', skipUnlessNode(24), () => {
   const result = spawnSync('node', [SCRIPT], {
     input: '{ not valid json !!',
     encoding: 'utf8',
@@ -64,7 +70,7 @@ test('gate-guard.mjs - malformed stdin JSON exits 0, stdout is deny', skipUnless
   });
   assert.equal(result.status, 0, 'Should exit 0');
   const parsed = parseDecision(result.stdout);
-  assert.equal(parsed.decision, 'deny');
+  assert.equal(parsed.decision, 'allow');
 });
 
 test('gate-guard.mjs - empty stdin exits 0, stdout is JSON object', skipUnlessNode(24), () => {

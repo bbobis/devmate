@@ -119,6 +119,13 @@ options (approve / request changes / ask a question / abandon).
 - **"approve spec"** — the exact phrase remains a zero-cost hook fast path: the
   approval listener advances the gate itself, stamping actor hook-exact-phrase with the
   raw prompt as evidence.
+- **"revise spec: use OAuth"** — the exact-prefix path records the
+  spec_revision_requested trace event AND (#126) emits a model-visible redraft
+  instruction on the same turn carrying the verbatim feedback — the trace write
+  alone reached no one, so the request used to vanish from the user's
+  perspective. The gate stays at `spec-draft`; the orchestrator re-dispatches
+  @spec-writer with the feedback (the redraft evidence is spec.md itself,
+  re-stamped on disk — the self-loop never moves the gate).
 
 Off-script input therefore never stalls dispatch: there is no required phrase, and the
 feedback-revision cycle continues until explicit approval arrives.

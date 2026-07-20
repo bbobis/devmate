@@ -62,6 +62,9 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadHookManifest, extractScriptPath } from '../../lib/hooks/registry.mjs';
 import { readJsonlSync } from '../../lib/json-io.mjs';
+import { getOwn } from '../../lib/object-utils.mjs';
+import { markDevmateSession } from '../../lib/hooks/session-marker.mjs';
+import { withMarkedSession } from '../../lib/test-utils/hook-session.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -172,6 +175,11 @@ function rebase(event, hostCwd) {
  * @param {string} cwd
  */
 function spawnHook(script, args, payload, cwd) {
+  // Enforcement is session-scoped: mark the payload's session as devmate so the
+  // guarded hooks run live (a real session gets this from the first devmate
+  // SubagentStart).
+  const sid = getOwn(/** @type {Record<string, unknown>} */ (payload ?? {}), 'session_id');
+  if (typeof sid === 'string' && sid !== '') markDevmateSession(sid, 'router');
   const r = spawnSync('node', [join(REPO_ROOT, script), ...args], {
     input: JSON.stringify(payload),
     cwd,
@@ -334,18 +342,18 @@ describe('E2E — a real session, replayed through the real hooks', () => {
         }),
       );
 
-      const res = spawnSync(
-        process.execPath,
-        [join(REPO_ROOT, 'scripts', 'gate-guard.mjs')],
+      const res = withMarkedSession(
         {
-          input: JSON.stringify({
-            hook_event_name: 'PreToolUse',
-            tool_name: 'create_file',
-            tool_input: { filePath: join(dir, 'src', 'app.js'), content: 'x' },
-            cwd: join(dir, '.devmate'),
-          }),
-          encoding: 'utf8',
+          hook_event_name: 'PreToolUse',
+          tool_name: 'create_file',
+          tool_input: { filePath: join(dir, 'src', 'app.js'), content: 'x' },
+          cwd: join(dir, '.devmate'),
         },
+        (marked) =>
+          spawnSync(process.execPath, [join(REPO_ROOT, 'scripts', 'gate-guard.mjs')], {
+            input: JSON.stringify(marked),
+            encoding: 'utf8',
+          }),
       );
 
       const out = JSON.parse(res.stdout);

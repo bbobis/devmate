@@ -59,9 +59,11 @@ a source path, and every unrecognized tool whose input names one — as an edit.
 | **an unrecognized tool** (MCP / extension-contributed / a name VS Code adds tomorrow) | its `tool_input` names a source-extension path or any path under `.devmate/`, under **any** key (`path`, `uri`, a `file://` URI, nested in an object or array) — `namedPaths` in `lib/hooks/tool-input.mjs` | **YES** |
 | **an unrecognized tool** | its `tool_input` names no such path (`{"query": "SELECT * FROM sessions"}`) | no |
 | **an unrecognized tool** | no `tool_input` was inspected at all (e.g. an eval scoring off a trace `actionType`) | **YES** (fail closed) |
-| `run_in_terminal` | any *unquoted* `>` / `>>` redirect (including `2>` etc.) onto a source-extension target | **YES** |
-| `run_in_terminal` | in-place editor family: `sed -i`, `perl -i`, `git apply`, `patch`, `tee` onto a source path, `mv`/`cp` onto a source path | **YES** |
+| `run_in_terminal` | any `>` / `>>` redirect (including `2>` etc.) onto a source-extension target | **YES** |
+| `run_in_terminal` | in-place editor family: `sed -i`, `perl -i`, `git apply`, `patch`, `tee`/`mv`/`cp` onto a source path or session artifact | **YES** |
 | `run_in_terminal` | opaque inline interpreters: `python -c`, `python3 -c`, `node -e`/`--eval` (embedded code cannot be analyzed — fail closed) | **YES** |
+| `run_in_terminal` | interpreter wrapper heads: `bash`, `sh`, `zsh`, `dash`, `ksh`, `pwsh`, `powershell`, `cmd` (their script argument is opaque — fail closed, #128) | **YES** |
+| `run_in_terminal` | any command with an unbalanced quote that references a source-path token anywhere inside it | **YES** (fail closed) |
 | `run_in_terminal` | PowerShell write cmdlets: `Set-Content`, `Out-File`, `Add-Content` | **YES** |
 | `run_in_terminal` | unclassifiable command referencing a source-path token | **YES** (fail closed) |
 | `run_in_terminal` | known read-only commands (`cat`, `grep`, `ls`, `head`, `tail`, `find`, `rg`, …) without a redirect; plain `node`/`node --test`/`npm`/`npx`/`git` (except `git apply`) | no |
@@ -113,11 +115,11 @@ boundary, once.
 
 Pipelines are analyzed per segment, so `echo hack | tee -a lib/app.mjs` is an edit
 even though the pipeline starts with a read-only command. Tokenization is
-quote-aware (#128): a `>` living inside a quoted argument is literal text, not a
-redirect, so `git commit -m "renamed > foo.mjs"` is not a source write; and `tee`
-is a write only when its actual argument names a write target, so a benign
-`npm test 2>&1 | tee test-results.log` is allowed while `… | tee lib/app.mjs`
-is not.
+quote-aware (#128): a redirect character, pipeline operator, or cmdlet name
+inside a quoted argument is ordinary text, so `git commit -m "renamed > foo.mjs"`
+is not a write — while `tee` onto a source path or session artifact, and every
+unquoted redirect, stay denied. `tee` onto a non-source target
+(`npm test 2>&1 | tee test-results.log`) is not an edit.
 
 > **Fail-closed stance**: the guard allows only what it can positively classify as
 > read-only. A shell command it cannot classify that touches a source-path token is
@@ -232,6 +234,7 @@ never apply to it. The shared predicate is `evaluateImplementationDispatch`
 4. **Session artifact**: path matches `sessionArtifactPaths` → `deny`, unless the in-flight agent is a declared writer of that path in `sessionArtifactWriters` (`spec-writer` → `spec.md`) → `allow`. No identity, or an ambiguous one (several different sub-agents in flight), denies. See [Session-Artifact Protection](#session-artifact-protection) — the deny needs no agent identity, which is what makes it enforceable at an event that carries none (#93). Rules 2 and 3 consult the same verdict, so a declared writer may write its artifact even when task state is unreadable or the gate forbids source edits.
 5. **Persona scope**: **DELETED (#99).** There is no per-edit persona rule, and there cannot be one on this surface: a `PreToolUse` payload carries **no agent identity of any kind** — `session_id`, `tool_name`, `tool_input`, `tool_use_id`, `cwd`, `transcript_path`, and nothing else (`test/fixtures/hook-payloads/captured/pretooluse.read-file.json`, asserted in `test/conformance/agent-identity.test.mjs`). `agent_type` exists only on `SubagentStart`/`SubagentStop`. So when the feature lane runs backend and frontend workers concurrently, an edit arriving here cannot be attributed to either — not from the `activeAgents` roster, not from a pinned `activePersona`, and not from any parent link the host might add to `SubagentStart` (`agent_id` **is** already a parent link — it is the spawning `runSubagent`'s `tool_use_id` — and it is useless here, because the edit event carries nothing to join it against). The rule shipped dormant for the plugin's whole life (nothing ever wrote `activePersona`), and a rule that reads as a boundary while enforcing nothing is worse than no rule. The per-worker boundary now lives **solely** at completion time — see [Completion-time persona-scope verification](#completion-time-persona-scope-verification), which #99 also made actually fire. Rule numbers 6/7/8 are unchanged so the names in the code, the docs and the issue history still line up.
 6. **scope.md enforcement (P06)**: parsed scope present + source-edit outside `allowedPaths`/`allowedGlobs` → `deny`. This is the primary, concurrency-safe per-file boundary. **All three lanes now write a `scope.md`** before implementation — bug (`@diagnose` bugScope), chore (proposed files), and feature (the plan's "Files that will change" list, plus a test-glob floor so TDD can create test files). A file outside the scope is a genuine scope change and re-enters planning, not a silent edit.
+   - **Edit-path containment (#187)**: FIRST, before the glob match, an edit whose target **resolves outside the workspace root** — a `..` traversal or an absolute path pointing elsewhere — is denied regardless of `scope.md`. `matchGlob` is fuzzy (a `**` consumes any segments), so a wildcard-leading glob — including the always-on test-glob floor — matches an out-of-workspace path and would otherwise authorize the escaping edit. Write-side scope sanitization (#170 paths / #180 globs) cannot close this; only resolving the target against the root can. The pure evaluator does no path I/O — the runtime guard (`scripts/gate-guard.mjs`) resolves the target (`pathEscapesWorkspace`, `lib/workflow/scope.mjs`) and hands the verdict.
 7. **TDD pre-condition (E12-2)**: `impl-started` + non-test source edit with no test evidence → `deny`.
 8. **Default**: `allow`.
 

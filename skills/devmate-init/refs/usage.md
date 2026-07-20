@@ -6,6 +6,11 @@ deterministic scan and the write are performed by
 only job is the **enrich** step in between — and even there it may only select
 and label evidence the scan already found. Do not skip the confirmation step.
 
+**`${PLUGIN_ROOT}` is not a shell variable.** Your terminal cannot expand it —
+it is the devmate install directory, advertised as "Bundled scripts root" in
+the `<devmate-skills>` context block. Substitute that absolute path literally
+into every command below before running it.
+
 ## Step 1 — Generate
 
 Get the proposal + evidence from the backing script (the single source of truth

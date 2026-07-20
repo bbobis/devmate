@@ -55,7 +55,9 @@ function factLine(over) {
     event: 'fact',
     key: 'lib/a.mjs:1',
     source: 'lib/a.mjs',
-    tool: 'write_file',
+    // #150: the committed MEMORY.md renders SEMANTIC discovery facts only, so
+    // pipeline fixtures must be discovery-merge facts to reach the rendered view.
+    tool: 'discovery-merge',
     lane: 'feature',
     tags: [],
     summary: 'edited a',

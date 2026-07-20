@@ -1,0 +1,7 @@
+{
+  "claims": [
+    { "fact": "Feature lane step 2 dispatches discovery", "path": "agents/orchestrator.agent.md#L162", "confidence": "high" },
+    { "fact": "A scheduler module drives the gates", "path": "lib/nonexistent-scheduler.mjs#L10", "confidence": "high" }
+  ],
+  "unverified": []
+}

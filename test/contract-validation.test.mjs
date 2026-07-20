@@ -20,6 +20,13 @@ import {
 import { assertDiagnosisResult } from '../lib/workflow/bug-handoff.mjs';
 import { runWithIO } from '../hooks/contract-validator.mjs';
 
+import { markSessionForFile } from '../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-contract-validation');
+
 /** @returns {import('../lib/types.mjs').WorkerReturn} */
 function makeWorkerReturn() {
   return {
@@ -265,6 +272,7 @@ test('contract-validator rejects malformed worker-return artifact', async () => 
     const stdout = captureWritable();
     const stderr = captureWritable();
     const payload = {
+      session_id: TEST_SESSION_ID,
       cwd: ws.root,
       tool_input: { filePath: artifact },
     };
@@ -295,6 +303,7 @@ test('contract-validator rejects malformed diagnosis and appends contract_violat
 
     const stderr = captureWritable();
     const payload = {
+      session_id: TEST_SESSION_ID,
       cwd: ws.root,
       tool_input: { filePath: artifact },
     };
@@ -320,6 +329,7 @@ test('contract-validator no-ops for unrouted path', async () => {
   const ws = makeWorkspace();
   try {
     const payload = {
+      session_id: TEST_SESSION_ID,
       cwd: ws.root,
       tool_input: { filePath: path.join(ws.root, 'notes.txt') },
     };

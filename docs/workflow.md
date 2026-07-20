@@ -119,9 +119,13 @@ precondition artifact:
   Requires a captured scope-change note at `.devmate/state/scope-change.json`
   for the current task; the spec loop re-runs with the preserved taskId, spec
   metadata, and completed workstreams intact (the feature lane applies this
-  via its steering helper, which mirrors the continue-approved path).
+  via its steering helper, which mirrors the continue-approved path). Fired at
+  runtime by the human phrase `revise scope: <reason>` (#127) — the
+  UserPromptSubmit hook captures the note from the phrase itself, so no
+  separate capture step is needed.
 - `impl-started → plan-done` (event: re-plan): approach change without a scope
-  change. Re-checks the existing critique-result precondition on entry.
+  change. Re-checks the existing critique-result precondition on entry. Fired
+  at runtime by the human phrase `re-plan: <reason>` (#127).
 - `spec-draft → grill-done` (event: new-requirements): pre-implementation
   backward step when new requirements surface at spec review. Re-checks the
   existing grill-result precondition.
@@ -134,6 +138,17 @@ precondition artifact:
 - any in-flight gate (or `parked`) → `abandoned` (event: abandon): deliberate
   terminal, issued only after the explicit confirmation required by the gate
   conversation protocol above.
+
+A terminal task never wedges the workspace: once the gate is `done` or
+`abandoned`, nothing can transition out of it, so a NEW session's
+`SessionStart` bootstraps a fresh task (at `no-lane`, with a new taskId) over
+the finished `task.json`. The finished task's session artifacts are left in
+place but ignored — they carry the old taskId, so every ownership-checking
+gate precondition refuses them as stale evidence. A resumed SAME session keeps
+its finished task (the deterministic task id it would derive is the finished
+task's own, and a reused id would inherit the old evidence instead of refusing
+it). A `parked` task is a pause, not a terminal: a fresh session keeps it
+intact for a later resume.
 
 When the per-turn router (E10-4) classifies an in-flight message as a
 `steer-scope` intent during implementation, the orchestrator maps it to one of

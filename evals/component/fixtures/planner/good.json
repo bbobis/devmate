@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "description": "Persist the planner artifact",
+      "ac": ["Plan artifact is persisted to plan.json", "Each task carries a TDD approach"],
+      "tddApproach": "node:test unit assertions on persistPlanArtifact write + digest",
+      "persona": "backend",
+      "files": ["lib/workflow/agents/planner.mjs"]
+    },
+    {
+      "description": "Tag unverified assumptions",
+      "ac": ["Assumptions are tagged [UNVERIFIED]"],
+      "tddApproach": "assert createPlannerArtifact prefixes assumptions with [UNVERIFIED]",
+      "persona": "backend",
+      "files": ["lib/workflow/agents/planner.mjs"]
+    }
+  ],
+  "assumptions": ["[UNVERIFIED] state file exists before planner run"],
+  "openRisks": ["[UNVERIFIED] digest mismatch during writes"],
+  "unverified": ["[UNVERIFIED] state file exists before planner run", "[UNVERIFIED] digest mismatch during writes"]
+}

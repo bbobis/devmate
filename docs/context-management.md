@@ -28,6 +28,40 @@ a critical threshold, measured in estimated tokens:
 | standard | 8,000 | 16,000 |
 | large | 20,000 | 40,000 |
 
+## Packing evidence under the budget (#30)
+
+Deciding *how many* sources may enter (the `max_context_sources` cap) and *how*
+to shrink an over-budget pack (the ContextReducer) leaves a gap in the middle:
+given N candidate evidence pointers and a token budget, *which ones, and at what
+fidelity*. `packEvidence(pointers, budget)`
+([lib/context/evidence-pack.mjs](../lib/context/evidence-pack.mjs)) fills it as a
+value-ranked greedy selection — assembly framed as the knapsack-flavored
+optimization it is (Berryman & Ziegler, *Prompt Engineering for LLMs*, ch6).
+
+- **Value score.** Each pointer is ranked by `w_c·confidence + w_f·freshness +
+  w_r·relevance`. Freshness is scored by *relative* recency across the candidate
+  set (newest = 1), so ranking is deterministic — no wall clock. Weights start
+  equal (provisional; calibrated later against which pointers get cited).
+- **Additive greedy** (default): admit by descending value until the token budget
+  or the source cap is exhausted.
+- **Subtractive greedy** (`mode: 'subtractive'`, for the `large` class): start
+  from the top-value sources at full fidelity and drop the lowest-value until the
+  set fits — reduction precedes packing.
+- **Elastic slices.** Each admitted pointer is loaded at a fidelity chosen under
+  the *remaining* budget: `loadElasticSlice(pointer, form)` returns the full slice
+  when there is room, and a compact one-line summary descriptor (pointer + reason,
+  no file content) once remaining budget falls to `ELASTIC_SUMMARY_TRIGGER_RATIO`
+  of the class budget. A full slice that would not fit is downgraded to a summary
+  before it is dropped.
+- **No silent truncation.** The plan reports `dropped` — how many candidates did
+  not fit — so a truncated pack is observable, never a silent cap (AGENTS.md).
+
+The packer reads its `{ maxTokens, maxSources }` budget from
+`packBudgetForClass(class)`
+([lib/context/output-contract.mjs](../lib/context/output-contract.mjs)), which
+draws the token budget from the canonical session-budget thresholds and the
+source cap from the per-class map — the numbers are never duplicated.
+
 ## What counts as context — and what does not
 
 Two rules decide what the budget is allowed to count. Both were learned the hard

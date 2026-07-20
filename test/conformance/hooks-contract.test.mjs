@@ -50,6 +50,8 @@ import {
 import { tmpdir } from 'node:os';
 import { loadHookManifest, extractScriptPath } from '../../lib/hooks/registry.mjs';
 import { validateHookOutput } from '../../lib/hooks/output-schema.mjs';
+import { getOwn } from '../../lib/object-utils.mjs';
+import { markDevmateSession } from '../../lib/hooks/session-marker.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -180,6 +182,11 @@ function walk(dir, base = dir) {
  * @param {string} cwd
  */
 function spawnHook(script, args, payload, cwd) {
+  // Enforcement is session-scoped: mark the payload's session as devmate so the
+  // guarded hooks run live (a real session gets this from the first devmate
+  // SubagentStart).
+  const sid = getOwn(/** @type {Record<string, unknown>} */ (payload ?? {}), 'session_id');
+  if (typeof sid === 'string' && sid !== '') markDevmateSession(sid, 'router');
   const r = spawnSync('node', [join(REPO_ROOT, script), ...args], {
     input: JSON.stringify(payload),
     cwd,

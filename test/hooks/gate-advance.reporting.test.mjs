@@ -13,13 +13,14 @@
  * A silent partial failure is the exact bug class this hook was built to end.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Writable } from 'node:stream';
 
 import { handlePostToolUse } from '../../hooks/gate-advance.mjs';
+import { mutateTaskStateUnderLock } from '../../lib/task-state.mjs';
 
 /** Collect everything a stream is given. */
 function capture() {
@@ -137,6 +138,54 @@ test('gate-advance/reporting › a fully successful projection reports nothing',
       /gate-advance\.(no_projection|partial_projection)/,
       `a clean projection must be silent; got: ${err.text()}`,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── #198: the gate advance is a version-checked write (CAS loop) ──────────────
+
+test('#198 gate-advance › a concurrent field write is NOT clobbered by the gate advance', async () => {
+  // A router return at `no-lane` sets the lane and advances no-lane → lane-set —
+  // a real gate-advance write. Race it against a write to an unrelated field.
+  // Pre-fix, the blind writeTaskState of the advanced state (from a stale read)
+  // would drop the field; the CAS loop re-reads fresh (or retries on conflict),
+  // so both the advance AND the concurrent field survive.
+  const root = mkdtempSync(join(tmpdir(), 'devmate-ga-cas-'));
+  mkdirSync(join(root, '.devmate', 'state'), { recursive: true });
+  const statePath = join(root, '.devmate', 'state', 'task.json');
+  writeFileSync(
+    statePath,
+    JSON.stringify({
+      taskId: 't1', lane: 'feature', workflowGate: 'no-lane', currentStep: 0,
+      artifactHashes: {}, preImplStash: null, budget: 10, schemaVersion: 1,
+    }),
+    'utf8',
+  );
+  const out = capture();
+  const err = capture();
+  const routerReturn = {
+    repoRoot: root,
+    toolName: 'runSubagent',
+    toolUseId: 'toolu_r',
+    toolResponse: `Routing.\n\n${JSON.stringify({ agentName: 'router', lane: 'bug', budgetClass: 'standard', confidence: 0.9 })}`,
+  };
+  try {
+    // Deterministic interleaving: calling the hook runs its synchronous prefix
+    // (the top-of-function readTaskState) before returning the promise — so a
+    // pre-fix stale-read+blind-write would compute `advanced.state` from a snapshot
+    // that predates the field write below. Land the competing write NOW, then let
+    // the hook's async projection finish and commit. Pre-fix, the blind write drops
+    // activeSubagents; the CAS loop re-reads fresh (or retries on conflict) and both
+    // survive — so this reliably fails on pre-fix code, not just by luck.
+    const hookPromise = handlePostToolUse(routerReturn, { stdout: out.stream, stderr: err.stream });
+    await mutateTaskStateUnderLock((s) => ({ ...s, activeSubagents: 2 }), statePath);
+    await hookPromise;
+
+    const after = JSON.parse(readFileSync(statePath, 'utf8'));
+    assert.equal(after.workflowGate, 'lane-set', 'the gate advanced no-lane → lane-set');
+    assert.equal(after.lane, 'bug', 'the router lane was persisted');
+    assert.equal(after.activeSubagents, 2, 'the concurrent field write survived the CAS advance');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

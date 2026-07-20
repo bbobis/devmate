@@ -32,6 +32,26 @@ test('buildSkillMenu › one line per skill, wrapped in the block, id + summary'
   assert.match(menu, /- beta: Beta stuff\./);
 });
 
+test('buildSkillMenu › advertises the plugin root so bundled-script commands are runnable', () => {
+  // Skill bodies reference bundled scripts as ${PLUGIN_ROOT}/scripts/<x>.mjs,
+  // and that token only expands inside hook registrations — the model's
+  // terminal cannot resolve it. The menu is the one model-visible channel a
+  // hook (which KNOWS the install path) can advertise it on; without this line
+  // /devmate devmate-init cannot find init.mjs on a marketplace install.
+  const root = 'C:\\Users\\u\\.vscode\\agent-plugins\\devmate';
+  const menu = buildSkillMenu([man('alpha', 'A.')], { pluginRoot: root });
+  assert.ok(menu.includes(`Bundled scripts root: ${root}`), `menu must carry the root:\n${menu}`);
+  assert.ok(menu.includes('${PLUGIN_ROOT}'), 'menu must name the token it defines');
+  assert.match(menu, /<\/devmate-skills>$/, 'root line stays inside the block');
+});
+
+test('buildSkillMenu › no pluginRoot (or blank) → no root line', () => {
+  for (const opts of [undefined, {}, { pluginRoot: '' }]) {
+    const menu = buildSkillMenu([man('alpha', 'A.')], opts);
+    assert.ok(!menu.includes('Bundled scripts root:'), 'no root line without a resolved root');
+  }
+});
+
 test('buildSkillMenu › a skill with no description still lists its id', () => {
   assert.match(buildSkillMenu([man('gamma', '')]), /- gamma$/m);
 });

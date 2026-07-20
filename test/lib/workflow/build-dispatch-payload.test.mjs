@@ -458,3 +458,84 @@ test('build-dispatch-payload › single-root: payload has no repo-context sectio
     fixture.cleanup();
   }
 });
+
+// ── #151: the dispatch-time repo-memory section is token-budgeted ─────────────
+
+/** A repo memory string large enough to exceed MEMORY_CONTEXT_MAX_TOKENS (1500 ≈ 6000 bytes). */
+function oversizedMemory() {
+  const lines = ['# Repo memory', ''];
+  for (let i = 0; i < 900; i += 1) lines.push(`- durable fact ${i} about this repository`);
+  return lines.join('\n');
+}
+
+/**
+ * Dispatch with a given repo memory + optional budget override for portals-api.
+ * @param {string} memory
+ * @param {number} [budget]  optional memoryMaxTokens override
+ * @returns {string}
+ */
+function dispatchWithMemory(memory, budget) {
+  const fixture = writePlan(tddPlan());
+  try {
+    return buildDispatchPayload({
+      ...COMPLETENESS_FIELDS,
+      persona: 'backend',
+      tasks: [{ id: 'AC-1' }],
+      planPath: fixture.planPath,
+      config: multiRootConfig(),
+      sessionContext: {
+        repoMemories: { 'portals-api': memory },
+        ...(budget === undefined ? {} : { memoryMaxTokens: budget }),
+      },
+    });
+  } finally {
+    fixture.cleanup();
+  }
+}
+
+test('build-dispatch-payload › #151 under budget: memory is rendered verbatim (no digest marker)', () => {
+  const payload = dispatchWithMemory('a small, durable repository fact');
+  assert.match(payload, /a small, durable repository fact/, 'small memory is injected in full');
+  assert.doesNotMatch(payload, /over budget/, 'no degradation when under budget');
+});
+
+test('build-dispatch-payload › #151 over budget: degrades LOUDLY to a digest + pointer, never a silent paste', () => {
+  const payload = dispatchWithMemory(oversizedMemory());
+  assert.match(payload, /\[repo memory over budget — digest below; read \.devmate\/MEMORY\.md for the rest\]/);
+  assert.match(payload, /durable fact 0 about this repository/, 'the digest head is present');
+  assert.doesNotMatch(payload, /durable fact 800 about this repository/, 'the tail is NOT pasted verbatim');
+});
+
+test('build-dispatch-payload › #151 a small memoryMaxTokens override forces even a small memory to digest', () => {
+  const payload = dispatchWithMemory('a small durable repository fact that is a few tokens long', 3);
+  assert.match(payload, /over budget — digest below/, 'the override tightens the budget');
+});
+
+test('build-dispatch-payload › #151 a generous memoryMaxTokens override keeps a large memory in full', () => {
+  const payload = dispatchWithMemory(oversizedMemory(), 100000);
+  assert.match(payload, /durable fact 800 about this repository/, 'a generous override keeps the full memory');
+  assert.doesNotMatch(payload, /over budget/);
+});
+
+test('build-dispatch-payload › #151 a non-positive or non-finite memoryMaxTokens is rejected', () => {
+  for (const bad of [0, -1, Infinity, NaN]) {
+    assert.throws(
+      () => dispatchWithMemory('some memory', bad),
+      /memoryMaxTokens must be a positive finite number/,
+      `expected throw for override ${bad}`,
+    );
+  }
+});
+
+test('build-dispatch-payload › #151 the over-budget DIGEST is itself clamped (pathological all-headings memory)', () => {
+  // A memory that is almost entirely headings: buildMemoryDigest would otherwise
+  // reproduce nearly the whole file in one "Headings: …" line, defeating the cap.
+  const headings = [];
+  for (let i = 0; i < 1500; i += 1) headings.push(`## section heading number ${i} with some words`);
+  const memory = headings.join('\n');
+  // A tiny override forces even the headings-only fallback over budget → marker only.
+  const payload = dispatchWithMemory(memory, 20);
+  assert.match(payload, /repo memory over budget/, 'the loud marker always fires');
+  // The whole heading list must NOT be pasted under a 20-token budget.
+  assert.doesNotMatch(payload, /section heading number 1400/, 'the digest is clamped, not the whole file');
+});

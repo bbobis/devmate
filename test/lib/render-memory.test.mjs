@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,7 +49,7 @@ test('render-memory creates marker-bounded block when memory file does not exist
           key: 'src/auth.mjs:aaaa1111',
           source: 'src/auth.mjs',
           summary: 'auth baseline',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: ['ext:mjs'],
           confidence: 0.8,
@@ -86,7 +87,7 @@ test('render-memory groups by source and keeps distinct keys for same source', a
           key: 'src/auth.mjs:aaaa1111',
           source: 'src/auth.mjs',
           summary: 'jwt setup',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: ['ext:mjs'],
           confidence: 0.8,
@@ -100,7 +101,7 @@ test('render-memory groups by source and keeps distinct keys for same source', a
           key: 'src/auth.mjs:bbbb2222',
           source: 'src/auth.mjs',
           summary: 'refresh token update',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: ['ext:mjs'],
           confidence: 0.8,
@@ -114,7 +115,7 @@ test('render-memory groups by source and keeps distinct keys for same source', a
           key: 'src/cache.mjs:cccc3333',
           source: 'src/cache.mjs',
           summary: 'cache ttl tuned',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: ['ext:mjs'],
           confidence: 0.8,
@@ -152,7 +153,7 @@ test('render-memory excludes staled facts', async () => {
           key: 'src/auth.mjs:aaaa1111',
           source: 'src/auth.mjs',
           summary: 'old auth note',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: ['ext:mjs'],
           confidence: 0.8,
@@ -193,7 +194,7 @@ test('render-memory replaces existing marker block and is idempotent', async () 
           key: 'src/auth.mjs:aaaa1111',
           source: 'src/auth.mjs',
           summary: 'fresh auth note',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: ['ext:mjs'],
           confidence: 0.8,
@@ -249,7 +250,7 @@ test('render-memory flags oversize (never clips) past the soft line cap', async 
         key: `src/a.mjs:${i}`,
         source: 'src/a.mjs',
         summary: `note ${i}`,
-        tool: 'write_file',
+        tool: 'discovery-merge',
         lane: 'feature',
         tags: [],
         confidence: 0.8,
@@ -282,7 +283,7 @@ test('render-memory is not oversize for a small ledger', async () => {
           key: 'src/a.mjs:1',
           source: 'src/a.mjs',
           summary: 'one',
-          tool: 'write_file',
+          tool: 'discovery-merge',
           lane: 'feature',
           tags: [],
           confidence: 0.8,
@@ -296,6 +297,135 @@ test('render-memory is not oversize for a small ledger', async () => {
     );
     const result = await renderMemory(repoLedger, memoryFile);
     assert.equal(result.oversize, false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('render-memory #149: a first render writes the file (wrote: true)', async () => {
+  const { repoLedger, memoryFile, cleanup } = makeRoot();
+  try {
+    writeFileSync(
+      repoLedger,
+      jsonl([
+        {
+          event: 'fact', key: 'src/a.mjs:1', source: 'src/a.mjs',
+          summary: 'a fact', tool: 'discovery-merge', lane: 'feature', tags: [],
+          confidence: 0.8, ts: 1, stepId: '1', firstEdit: false, contentDigest: 'aaaa1111aaaa1111', taskId: 'task-1',
+        },
+      ]),
+      'utf8',
+    );
+    assert.equal(existsSync(memoryFile), false);
+    const result = await renderMemory(repoLedger, memoryFile);
+    assert.equal(result.ok, true);
+    assert.equal(result.wrote, true, 'the initial render must write the file');
+    assert.equal(existsSync(memoryFile), true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('render-memory #149: a re-render from an unchanged ledger is a no-op write (wrote: false, file untouched)', async () => {
+  const { repoLedger, memoryFile, cleanup } = makeRoot();
+  try {
+    writeFileSync(
+      repoLedger,
+      jsonl([
+        {
+          event: 'fact', key: 'src/a.mjs:1', source: 'src/a.mjs',
+          summary: 'a fact', tool: 'discovery-merge', lane: 'feature', tags: [],
+          confidence: 0.8, ts: 1, stepId: '1', firstEdit: false, contentDigest: 'aaaa1111aaaa1111', taskId: 'task-1',
+        },
+      ]),
+      'utf8',
+    );
+
+    const first = await renderMemory(repoLedger, memoryFile);
+    assert.equal(first.wrote, true);
+    const bytesAfterFirst = readFileSync(memoryFile);
+    const mtimeAfterFirst = statSync(memoryFile).mtimeMs;
+
+    // Nothing changed in the ledger — the render must not touch the tracked file.
+    const second = await renderMemory(repoLedger, memoryFile);
+    assert.equal(second.ok, true);
+    assert.equal(second.wrote, false, 'an identical render must skip the write');
+    const bytesAfterSecond = readFileSync(memoryFile);
+    assert.equal(
+      Buffer.compare(bytesAfterFirst, bytesAfterSecond),
+      0,
+      'the tracked file bytes must be byte-for-byte unchanged',
+    );
+    assert.equal(
+      statSync(memoryFile).mtimeMs,
+      mtimeAfterFirst,
+      'the tracked file must not be rewritten (mtime unchanged)',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+// ── #150: the committed MEMORY.md prefers semantic discovery facts ────────────
+
+test('#150 render-memory EXCLUDES bare edit events, keeps discovery facts', async () => {
+  const { repoLedger, memoryFile, cleanup } = makeRoot();
+  try {
+    writeFileSync(
+      repoLedger,
+      jsonl([
+        // A discovery fact — a natural-language repository claim (kept).
+        {
+          event: 'fact', key: 'src/auth.mjs:d1', source: 'src/auth.mjs',
+          summary: 'auth uses a rotating-key JWT scheme', tool: 'discovery-merge',
+          lane: 'feature', tags: [], confidence: 0.9, ts: 2000, stepId: 's', firstEdit: false,
+          contentDigest: 'abcd1234abcd1234', taskId: 'task-1',
+        },
+        // Bare edit events — telemetry, excluded from the committed artifact.
+        {
+          event: 'fact', key: 'src/noise.mjs:e1', source: 'src/noise.mjs',
+          summary: 'write_file edited src/noise.mjs', tool: 'write_file',
+          lane: 'feature', tags: [], confidence: 0.8, ts: 2100, stepId: 's', firstEdit: true, taskId: 'task-1',
+        },
+        {
+          event: 'fact', key: 'src/auth.mjs:e2', source: 'src/auth.mjs',
+          summary: 'edit edited src/auth.mjs', tool: 'edit',
+          lane: 'feature', tags: [], confidence: 0.8, ts: 2200, stepId: 's', firstEdit: false, taskId: 'task-1',
+        },
+      ]),
+      'utf8',
+    );
+
+    const result = await renderMemory(repoLedger, memoryFile);
+    assert.equal(result.ok, true);
+    assert.equal(result.factsRendered, 1, 'only the discovery fact is committed');
+    const out = readFileSync(memoryFile, 'utf8');
+    assert.ok(out.includes('auth uses a rotating-key JWT scheme'), 'the discovery claim is kept');
+    assert.ok(!out.includes('edited src/noise.mjs'), 'edit-event telemetry is excluded');
+    assert.ok(!out.includes('## src/noise.mjs'), 'a source with only edit events gets no committed section');
+  } finally {
+    cleanup();
+  }
+});
+
+test('#150 render-memory orders discovery facts by confidence, then recency', async () => {
+  const { repoLedger, memoryFile, cleanup } = makeRoot();
+  try {
+    writeFileSync(
+      repoLedger,
+      jsonl([
+        { event: 'fact', key: 'a:1', source: 'src/a.mjs', summary: 'low conf newer', tool: 'discovery-merge', lane: 'feature', tags: [], confidence: 0.6, ts: 3000, stepId: 's', firstEdit: false, contentDigest: 'aaaa1111aaaa1111', taskId: 't' },
+        { event: 'fact', key: 'a:2', source: 'src/a.mjs', summary: 'high conf older', tool: 'discovery-merge', lane: 'feature', tags: [], confidence: 0.9, ts: 1000, stepId: 's', firstEdit: false, contentDigest: 'bbbb2222bbbb2222', taskId: 't' },
+        { event: 'fact', key: 'a:3', source: 'src/a.mjs', summary: 'high conf newer', tool: 'discovery-merge', lane: 'feature', tags: [], confidence: 0.9, ts: 2000, stepId: 's', firstEdit: false, contentDigest: 'cccc3333cccc3333', taskId: 't' },
+      ]),
+      'utf8',
+    );
+
+    await renderMemory(repoLedger, memoryFile);
+    const out = readFileSync(memoryFile, 'utf8');
+    const order = ['high conf newer', 'high conf older', 'low conf newer'].map((s) => out.indexOf(s));
+    assert.ok(order[0] >= 0 && order[0] < order[1] && order[1] < order[2],
+      `expected confidence-desc then recency-desc order; got indices ${JSON.stringify(order)}`);
   } finally {
     cleanup();
   }

@@ -19,10 +19,12 @@ Detailed reference for every script in `/scripts`. All scripts require **Node.js
 | [check-entrypoint-guard.mjs](#check-entrypoint-guardmjs) | CI Guard | Rejects the Windows-broken entry-guard comparison in any .mjs, and any hooks.json command that cannot execute |
 | [check-file-budgets.mjs](#check-file-budgetsmjs) | CI Guard | Enforces per-file line-count budgets |
 | [check-generated-docs.mjs](#check-generated-docsmjs) | CI Guard | Verifies generated docs are up to date |
+| [check-memory.mjs](#check-memorymjs) | CI Guard | Opt-in consumer-repo guardrail: structurally validates a committed `.devmate/MEMORY.md` (marker integrity, bounds, secret scan) |
 | [check-memory-path-refs.mjs](#check-memory-path-refsmjs) | CI Guard | Validates memory path references in code |
 | [check-session-budget.mjs](#check-session-budgetmjs) | Hook | Runtime PostToolUse hook that checks agent session token budget usage (not run in CI) |
 | [check-settings-keys.mjs](#check-settings-keysmjs) | CI Guard | Validates VS Code settings keys in config |
-| [chore-continue.mjs](#chore-continuemjs) | Workflow | Continues a paused chore task |
+| [check-state-writers.mjs](#check-state-writersmjs) | CI Guard | Requires every direct `writeTaskState(` caller to be justified in the state-writer allowlist |
+| [chore-continue.mjs](#chore-continuemjs) | Workflow | Manual/recovery CLI: continues an approved chore (the runtime path is the approve-plan phrase) |
 | [compact-ledger.mjs](#compact-ledgermjs) | Memory | Compacts the repo memory ledger |
 | [compact-session.mjs](#compact-sessionmjs) | Memory | Compacts a session memory file |
 | [complete-ac.mjs](#complete-acmjs) | Workflow | Records a completed acceptance criterion and checks off its spec checkbox |
@@ -33,7 +35,7 @@ Detailed reference for every script in `/scripts`. All scripts require **Node.js
 | [devmate-init.mjs](#devmate-initmjs) | Init | Thin wrapper around `init.mjs` |
 | [diagnose-handoff.mjs](#diagnose-handoffmjs) | Diagnostics | Diagnoses issues with a handoff artifact |
 | [discovery-scan.mjs](#discovery-scanmjs) | Discovery | Deterministic, zero-LLM-cost fan-out candidate-file scan (FO-3) |
-| [escalate-chore.mjs](#escalate-choremjs) | Workflow | Escalates a chore to a higher-priority lane |
+| [escalate-chore.mjs](#escalate-choremjs) | Workflow | Manual/recovery CLI: escalates a chore to the feature lane (the runtime path is the escalation phrase) |
 | [eval-judge.mjs](#eval-judgemjs) | Evals | Opt-in LLM-judge tier for claim truth + AC testability (nightly, non-blocking) |
 | [eval-model-routing.mjs](#eval-model-routingmjs) | Evals | Records/validates model-routing baselines per budget class |
 | [fanout-report.mjs](#fanout-reportmjs) | Diagnostics | Fan-out parallelism/speedup/dedup/cost report from trace + telemetry (FO-8) |
@@ -277,6 +279,32 @@ node scripts/check-generated-docs.mjs
 
 ---
 
+## check-memory.mjs
+
+**Category:** CI Guard
+
+The opt-in guardrail a consumer repo adds to its own `.github/workflows/` to
+protect committed memory (#212). devmate ships the memory pipeline by seeding
+hooks + layout, but the promotion guardrails are CI and a plugin cannot add a
+workflow to someone else's repo — so this is the single bundled command that turns
+a trusted-by-convention `.devmate/MEMORY.md` into a verified one. It structurally
+validates the committed file (marker integrity of the auto-rendered facts block,
+the render soft-cap bound, and a secret scan reusing `redactSecrets`). Full
+deterministic-regeneration verify is not possible because the ledger is git-ignored
+and never committed; the crux and the drop-in workflow YAML are documented in
+[docs/memory.md](memory.md#consumer-repo-enforcement--check-memory-opt-in).
+
+**Usage:**
+```
+node scripts/check-memory.mjs [repoRoot]
+```
+
+**Exit codes:**
+- `0` — committed memory is clean, or there is no committed memory to check
+- `1` — one or more violations (malformed marker block, over the soft cap, or a secret-like token)
+
+---
+
 ## check-memory-path-refs.mjs
 
 **Category:** CI Guard
@@ -328,23 +356,40 @@ node scripts/check-settings-keys.mjs
 
 ---
 
-## chore-continue.mjs
+## check-state-writers.mjs
 
-**Category:** Workflow
+**Category:** CI Guard
 
-Continues a previously paused chore task. Reads the current task state and picks up from the last completed step. Designed to be called by the agent after a manual review or interruption.
+Enforces the #112 rule that `mutateTaskStateUnderLock` is the canonical, atomic way to change `task.json`. Scans every `.mjs` under `lib/`, `scripts/`, `hooks/` for a direct `writeTaskState(` call (comments and imports ignored; pure logic in `lib/state-writer-lint.mjs`) and diffs the callers against `docs/state-writer-allowlist.json`. Fails on any **new unlisted** caller (route it through the mutation API or justify it) and on any **stale** allowlist entry that no longer calls it (a migrated writer to prune). See [state-management.md](./state-management.md).
 
 **Usage:**
 ```
-node scripts/chore-continue.mjs --taskId <id>
+node scripts/check-state-writers.mjs
+```
+
+**Exit codes:**
+- `0` — every direct writeTaskState caller is justified in the allowlist
+- `1` — an unlisted caller or a stale allowlist entry was found
+
+---
+
+## chore-continue.mjs
+
+**Category:** Workflow (manual/recovery CLI)
+
+Continues an approved chore into the executing phase without resetting state: asserts the gate is `plan-approved`, advances via the shared transition utility, and writes a compact result JSON (also to `.devmate/state/chore-continue-result.json`). **Not agent-invoked at runtime (#130):** the orchestrator (which owns the workflow) declares no execute tool, and no hook, skill, or agent instruction wires this script — the chore lane's `plan-approved -> impl-started` move happens in `hooks/approval-listener.mjs` on the human phrase `approve plan`. This CLI remains for a human at a terminal, e.g. to recover a session whose approval hook cannot fire.
+
+**Usage:**
+```
+node scripts/chore-continue.mjs [--state-path <path>]
 ```
 
 **Flags:**
-- `--taskId <id>` — required; the task to continue
+- `--state-path <path>` — optional; override the task-state file location (tests / non-default layouts)
 
 **Exit codes:**
 - `0` — task continued successfully
-- `1` — error (missing taskId, unreadable state)
+- `1` — reset-guard block or invalid state
 
 ---
 
@@ -485,19 +530,20 @@ node scripts/create-handoff.mjs --task-id <id> [--trace-file <path>]
 
 **Category:** Memory
 
-Health-checks the three-stage memory pipeline — task ledgers (`.devmate/memory/tasks/*.jsonl`) → repo ledger (`.devmate/state/repo/repo.jsonl`) → `.devmate/MEMORY.md` — and reports the first stage that looks broken (the `/memory`-style diagnostic). Also runs DN-1 business-domain doctor checks (declared-but-missing `contextFile`, dangling `relatedDomains` id, missing `entryPoints` path, empty `globs`, duplicate domain id) when `.devmate/devmate.config.json` declares a `domains` array — warnings only, reported under `domainWarnings` in the JSON summary and never affecting this command's exit code. Prints a compact JSON summary to stdout and human-readable findings to stderr; writes the full diagnosis (plus `domainWarnings`) to `.devmate/state/memory-doctor-result.json` for `read_file` access. Pure read — never mutates.
+Health-checks the three-stage memory pipeline — task ledgers (`.devmate/memory/tasks/*.jsonl`) → repo ledger (`.devmate/state/repo/repo.jsonl`) → `.devmate/MEMORY.md` — and reports the first stage that looks broken (the `/memory`-style diagnostic). Also runs a **gate-evidence consistency** stage (`lib/gate-consistency.mjs`): it proves the persisted `workflowGate` is backed by the artifacts and audit events it legally requires, and classifies any divergence (gate ahead of evidence, gate behind the trace, a human-audit gate reached with no audited transition, or a corrupt trace) under `gateConsistency` in the JSON summary. A divergence left unreconciled makes this command exit 1 and prints the recovery command on stderr. Also runs DN-1 business-domain doctor checks (declared-but-missing `contextFile`, dangling `relatedDomains` id, missing `entryPoints` path, empty `globs`, duplicate domain id) when `.devmate/devmate.config.json` declares a `domains` array — warnings only, reported under `domainWarnings` in the JSON summary and never affecting this command's exit code. Prints a compact JSON summary to stdout and human-readable findings to stderr; writes the full diagnosis (plus `domainWarnings`, `gateConsistency`, `gateFixed`) to `.devmate/state/memory-doctor-result.json` for `read_file` access. The memory and domain stages never mutate; the gate stage only mutates under the opt-in `--fix` flag.
 
 **Usage:**
 ```
-node scripts/devmate-doctor.mjs [--root <dir>]
+node scripts/devmate-doctor.mjs [--root <dir>] [--fix]
 ```
 
 **Flags:**
 - `--root <dir>` — repo root (default: cwd)
+- `--fix` — reconcile a desynced `workflowGate` to the last evidence-backed gate under the state lock (the consistency read, the write, and the re-check all run inside the same lock, so a concurrent writer cannot race the reconcile), stamping an audited `gate_transition` that records it and pruning stale artifact-hash trust residue for gates now behind the rollback. A divergence a rollback cannot resolve — a backward tamper whose gate is already evidence-backed, or a corrupt trace — is reported and left in place, not papered over with a no-op write; the command still exits 1 and `gateFixed` stays `false` unless the post-fix re-check is actually clean. Off by default; detection alone is always non-destructive.
 
 **Exit codes:**
-- `0` — pipeline looks healthy (domain warnings, if any, do not affect this)
-- `1` — a stage looks broken (see `firstBrokenStage` in the output)
+- `0` — pipeline looks healthy and the gate is evidence-backed (or was reconciled by `--fix`); domain warnings, if any, do not affect this
+- `1` — a memory stage looks broken (see `firstBrokenStage`) or the gate is desynced and left unreconciled (see `gateConsistency` in the output)
 
 ---
 
@@ -565,22 +611,21 @@ node scripts/discovery-scan.mjs --terms <csv> [--seed-files <csv>] [--budget-cla
 
 ## escalate-chore.mjs
 
-**Category:** Workflow
+**Category:** Workflow (manual/recovery CLI)
 
-Escalates a chore-lane task to a higher-priority lane (e.g. `bug` or `feature`) when it has grown beyond a simple chore. Updates the task state's `lane` field and logs the escalation.
+Escalates a chore-lane task to the feature lane when it has grown beyond a mechanical edit: lane `chore -> feature`, gate set to `plan-approved`, taskId preserved, and a `lane_transition` entry appended to the transitions log. **The runtime path is the human phrase (#130):** `escalate chore to feature: <reason>`, handled by `hooks/approval-listener.mjs` — the orchestrator declares no execute tool and nothing wires this script at runtime. It remains for a human at a terminal.
 
 **Usage:**
 ```
-node scripts/escalate-chore.mjs --task-id <id> --lane <lane>
+node scripts/escalate-chore.mjs --reason "<why>"
 ```
 
 **Flags:**
-- `--task-id <id>` — required
-- `--lane <lane>` — required; target lane (`feature` | `bug`)
+- `--reason <text>` — required; why the chore is being escalated
 
 **Exit codes:**
 - `0` — escalated successfully
-- `1` — error
+- `1` — error (bad state, not a chore, missing reason)
 
 ---
 

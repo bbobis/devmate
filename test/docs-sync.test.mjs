@@ -194,6 +194,31 @@ test('docs-sync › AGENTS.md contains a roster section header', () => {
   );
 });
 
+test('docs-sync › diagnose entry in docs/AGENTS.md matches the hook-persisted scope contract', () => {
+  const content = readFileSync(AGENTS_MD_PATH, 'utf8');
+  const start = content.indexOf('### `diagnose`');
+  assert.ok(start >= 0, 'docs/AGENTS.md must contain a diagnose section');
+
+  const end = content.indexOf('\n### `', start + 1);
+  const section = end >= 0 ? content.slice(start, end) : content.slice(start);
+
+  assert.match(
+    section,
+    /allowedPaths\[\].*allowedGlobs\[\]/s,
+    'diagnose docs must name allowedPaths[] and allowedGlobs[] as the scope boundary fields',
+  );
+  assert.match(
+    section,
+    /hook persists.*scope\.md|persisted by the hook to `scope\.md`/i,
+    'diagnose docs must state that the hook persists scope.md from the return fields',
+  );
+  assert.doesNotMatch(
+    section,
+    /writes a `DiagnosisResult` plus `scope\.md`|scope\.md with `allowedFiles\[\]`/i,
+    'diagnose docs must not claim the agent writes scope.md or uses the stale allowedFiles[] field',
+  );
+});
+
 // ---------------------------------------------------------------------------
 // New block — issue #214: orchestrator procedure/docs runtime sync
 // ---------------------------------------------------------------------------
@@ -253,7 +278,6 @@ test('docs-sync › orchestrator procedure named functions exist in referenced r
     { file: 'lib/workflow/orchestrator.mjs', fn: 'assertFullstackDispatchAllowed' },
     { file: 'lib/workflow/orchestrator.mjs', fn: 'assertDispatchResult' },
     { file: 'lib/workflow/lanes/feature.mjs', fn: 'continueApprovedFeature' },
-    { file: 'lib/workflow/lanes/chore.mjs', fn: 'runChoreLane' },
     { file: 'lib/workstream-partitioner.mjs', fn: 'partitionWorkstreams' },
     { file: 'lib/persona-instructions.mjs', fn: 'loadPersonaInstructions' },
     { file: 'lib/workflow/lanes/security-policy.mjs', fn: 'evaluateSecurityPolicy' },

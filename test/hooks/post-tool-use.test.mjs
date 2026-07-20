@@ -21,6 +21,13 @@ import { taskLedgerPath } from '../../lib/memory/paths.mjs';
 import { parseJsonl } from '../../lib/json-io.mjs';
 import { traceFilePath } from "../../lib/trace/append.mjs";
 
+import { markSessionForFile } from '../../lib/test-utils/hook-session.mjs';
+
+// Enforcement is session-scoped (lib/hooks/session-marker.mjs): these tests
+// exercise handlers inside an ACTIVE devmate session, so mark one for the
+// whole file and stamp its id into each payload.
+const TEST_SESSION_ID = markSessionForFile('devmate-test-post-tool-use');
+
 /**
  * Build a readable stream wrapping a string for `process.stdin`-style use.
  * @param {string} s
@@ -87,6 +94,7 @@ test("runWithIO — edit-tool payload writes a fact line and exits 0", async () 
       tool_input: { filePath: "lib/example.mjs" },
       cwd: root,
       hook_event_name: "PostToolUse",
+      session_id: TEST_SESSION_ID,
     };
     const stdin = stringReadable(JSON.stringify(payload));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
@@ -113,6 +121,7 @@ test("runWithIO — non-edit tool payload exits 0 and writes no fact", async () 
       tool_name: "read_file",
       tool_input: { filePath: "README.md" },
       cwd: root,
+      session_id: TEST_SESSION_ID,
     };
     const stdin = stringReadable(JSON.stringify(payload));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
@@ -159,6 +168,7 @@ test('runWithIO — missing task.json is the quiet pre-task window: exit 0, sing
       tool_input: { filePath: 'lib/example.mjs' },
       cwd: root,
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
     };
     const stdin = stringReadable(JSON.stringify(payload));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
@@ -196,6 +206,7 @@ async function assertCorruptedTaskStaysLoud(contents, label) {
       tool_input: { filePath: 'lib/example.mjs' },
       cwd: root,
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
     };
     const stdin = stringReadable(JSON.stringify(payload));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
@@ -235,6 +246,7 @@ test('runWithIO — invalid taskId in a well-formed task.json stays loud: exit 1
       tool_input: { filePath: 'lib/example.mjs' },
       cwd: root,
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
     };
     const stdin = stringReadable(JSON.stringify(payload));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
@@ -265,7 +277,7 @@ test("runWithIO — edit payload also appends an action trace line and exits 0",
       tool_input: { filePath: "lib/example.mjs" },
       cwd: root,
       hook_event_name: "PostToolUse",
-      session_id: "sess-abc",
+      session_id: TEST_SESSION_ID,
       timestamp: "2026-06-24T12:00:00.000Z",
     };
     const stdin = stringReadable(JSON.stringify(payload));
@@ -300,12 +312,13 @@ test("runWithIO — missing tool fields still audit (as unknown) into the TASK's
   const stdout = collectingWritable();
   const stderr = collectingWritable();
   try {
-    // Keep task context via cwd, but omit tool/session fields to exercise
-    // unknown-field audit fallback deterministically. actionType/path may
+    // Keep task context via cwd (and a session id, which the runtime scope
+    // requires), but omit the tool fields to exercise the unknown-field audit
+    // fallback deterministically. actionType/path may
     // degrade to 'unknown' (informational fields) — but the FILE the event
     // lands in is keyed by the real taskId from task.json, never a sentinel:
     // the trace schema now rejects taskId 'unknown' outright (#76).
-    const stdin = stringReadable(JSON.stringify({ cwd: root }));
+    const stdin = stringReadable(JSON.stringify({ cwd: root, session_id: TEST_SESSION_ID }));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
     assert.equal(code, 0);
     assert.equal(
@@ -340,7 +353,7 @@ test("runWithIO — audit failure never blocks: trace dir collision still exits 
       tool_name: "replace_string_in_file",
       tool_input: { filePath: "a.mjs" },
       cwd: root,
-      session_id: "sess-x",
+      session_id: TEST_SESSION_ID,
     };
     const stdin = stringReadable(JSON.stringify(payload));
     const code = await runWithIO(stdin, stdout.stream, stderr.stream);
@@ -480,6 +493,7 @@ function fullstackDispatchPayload(root, persona, changedFiles) {
     tool_response: { payload: { changedFiles } },
     cwd: root,
     hook_event_name: 'PostToolUse',
+    session_id: TEST_SESSION_ID,
   };
 }
 
@@ -579,6 +593,7 @@ test('runWithIO — edit-tool payload emits a fact_write trace event for the tas
       tool_input: { filePath: 'lib/auth.mjs' },
       cwd: root,
       hook_event_name: 'PostToolUse',
+      session_id: TEST_SESSION_ID,
     };
     const code = await runWithIO(stringReadable(JSON.stringify(payload)), stdout.stream, stderr.stream);
     assert.equal(code, 0);

@@ -27,6 +27,7 @@ import { skipUnlessNode } from '../../lib/test-utils/node-guard.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { withMarkedSession } from '../../lib/test-utils/hook-session.mjs';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -104,17 +105,22 @@ const SCOPE_MD = [
  * @returns {{ decision: string, reason: string }}
  */
 function guard(root, filePath) {
-  const res = spawnSync(process.execPath, [SCRIPT], {
-    input: JSON.stringify({
+  return withMarkedSession(
+    {
       hook_event_name: 'PreToolUse',
       tool_name: 'create_file',
       tool_input: { filePath, content: 'x' },
       cwd: join(root, '.devmate'),
-    }),
-    encoding: 'utf8',
-  });
-  const out = JSON.parse(res.stdout).hookSpecificOutput;
-  return { decision: out.permissionDecision, reason: out.permissionDecisionReason ?? '' };
+    },
+    (marked) => {
+      const res = spawnSync(process.execPath, [SCRIPT], {
+        input: JSON.stringify(marked),
+        encoding: 'utf8',
+      });
+      const out = JSON.parse(res.stdout).hookSpecificOutput;
+      return { decision: out.permissionDecision, reason: out.permissionDecisionReason ?? '' };
+    },
+  );
 }
 
 test(

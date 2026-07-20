@@ -6,7 +6,7 @@ import { assertNodeVersion, isMainModule } from "../lib/env-guard.mjs";
 import { createTextCapture, writeHookOutput } from '../lib/hooks/output-schema.mjs';
 import { resolveHookRoot } from '../lib/init/repo-root.mjs';
 import { captureMemory } from '../lib/memory/capture.mjs';
-import { readTaskState, writeTaskState } from '../lib/task-state.mjs';
+import { readTaskState, mutateTaskStateUnderLock } from '../lib/task-state.mjs';
 import { reduceEvidencePack } from '../lib/context/context-reducer.mjs';
 
 /** Default TaskState path when none is supplied. */
@@ -102,13 +102,28 @@ export async function main(args) {
       const reduced = await reduceEvidencePack(pack);
       if (reduced !== null) {
         const boundedPointers = reduced.allPointers.slice(0, pack.maxSources);
-        await writeTaskState(
-          { ...stateForPack.state, evidencePack: { ...pack, pointers: boundedPointers } },
+        // #112: atomic read-modify-write. The reduce ran on a snapshot read
+        // above; the mutator re-reads fresh in-lock and re-derives the bounded
+        // pointers from the CURRENT pack, so a concurrent evidence write is not
+        // clobbered — and if the pack vanished meanwhile, it becomes a no-op.
+        const outcome = await mutateTaskStateUnderLock(
+          (state) => {
+            const livePack = state.evidencePack;
+            if (livePack === undefined) return null;
+            const bounded = (reduced.allPointers).slice(0, livePack.maxSources);
+            return { ...state, evidencePack: { ...livePack, pointers: bounded } };
+          },
           resolve(taskStatePath),
+          { event: "compact-evidence-reduce" },
         );
-        capture.stream.write(
-          `Evidence pack reduced: ${reduced.originalCount} -> ${boundedPointers.length} pointer(s).\n`,
-        );
+        // Only claim the reduction landed when a write actually committed — a
+        // no-op (the pack vanished between snapshot and lock) or a failed write
+        // must not print a success line that misstates what happened.
+        if (outcome.ok && outcome.written) {
+          capture.stream.write(
+            `Evidence pack reduced: ${reduced.originalCount} -> ${boundedPointers.length} pointer(s).\n`,
+          );
+        }
       }
     }
   } catch (/** @type {unknown} */ err) {

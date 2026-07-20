@@ -141,6 +141,30 @@ test('gate-advance/scope › the diagnose return becomes the BUG lane\'s scope c
   }
 });
 
+test('gate-advance/scope › #180 an escaping glob in a diagnose return never reaches the bug lane scope contract', async () => {
+  // The bug lane's @diagnose return is the only attacker-influenceable glob
+  // source. An escaping glob must be dropped end-to-end, exactly as #170 drops an
+  // escaping path — proven here through the real projectWorkerReturn → writeScope
+  // path, not just the writeScope unit.
+  const root = workspace();
+  try {
+    const res = await projectWorkerReturn(
+      root,
+      'diagnose',
+      { ...DIAGNOSE_RETURN, allowedGlobs: ['../../etc/**', 'src/services/**/*.mjs'] },
+      taskState({ lane: 'bug' }),
+      CONFIG,
+    );
+    assert.equal(res.artifact, 'diagnosis.json');
+    const parsed = parseScope(readFileSync(scopePathFor(root, 't1'), 'utf8'));
+    assert.ok(!parsed.allowedGlobs.includes('../../etc/**'), 'the exact escaping glob is dropped');
+    assert.ok(parsed.allowedGlobs.includes('src/services/**/*.mjs'), 'the contained glob survives');
+    assert.ok(parsed.allowedGlobs.includes('**/*.test.mjs'), 'the test-glob floor survives');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('gate-advance/scope › a diagnosis bounded to NOTHING is refused', async () => {
   // Both lists empty would serialize to a contract that denies every edit. The
   // validator rejects it, so no diagnosis.json and no scope.md are written and
