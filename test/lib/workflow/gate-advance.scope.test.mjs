@@ -64,6 +64,16 @@ const PLANNER_RETURN = {
       tddApproach: 'write the failing test first',
       persona: 'backend',
       files: ['lib/guard.mjs', 'lib/index.mjs'],
+      alignment: [
+        {
+          capability: 'guard',
+          decision: 'add',
+          target: null,
+          usageEvidence: [],
+          patternRefs: ['lib/index.mjs:1'],
+          reason: 'fixture: nothing suitable to reuse',
+        },
+      ],
     },
     {
       description: 'Wire it up',
@@ -72,6 +82,16 @@ const PLANNER_RETURN = {
       persona: 'backend',
       // Deliberately overlapping — the contract must dedupe.
       files: ['lib/index.mjs'],
+      alignment: [
+        {
+          capability: 'wiring',
+          decision: 'add',
+          target: null,
+          usageEvidence: [],
+          patternRefs: ['lib/index.mjs:1'],
+          reason: 'fixture: nothing suitable to reuse',
+        },
+      ],
     },
   ],
   assumptions: [],

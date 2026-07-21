@@ -1,0 +1,10 @@
+{
+  "_comment": "Issue 238: planner-alignment component eval rubric. requiredCapabilities are the capabilities the captured plan.json must address with a well-formed reuse|extend|add decision (§3.2). passThreshold gates the suite; expectedGoodScore pins the good-fixture baseline.",
+  "requiredCapabilities": [
+    "artifact hash persistence",
+    "role-claim guard",
+    "gate transition table lookup"
+  ],
+  "passThreshold": 0.8,
+  "expectedGoodScore": 1
+}

@@ -57,6 +57,8 @@ Blocking questions become assumption checkboxes in `spec.md` — they do not blo
 **5. [INTERNAL GATE] `grill-done`** — advance automatically.
 
 **6. Plan + UI brief.** Dispatch `@planner` and `@ui-ux` in the same response turn.
+The planner must emit `alignment[]` (`reuse | extend | add` evidence) on every
+task; `validatePlannerArtifact` fails closed without it (#238).
 
 **7. [INTERNAL GATE] `plan-done`** — advance automatically.
 
@@ -81,7 +83,9 @@ without advancing. Never infer approval; never stop dispatching subagents becaus
 phrasing was unexpected.
 
 **11. Implementation.** On human approval, advance gate to `impl-started`. Partition the spec
-file list by persona. Dispatch order:
+file list by persona. Build each dispatch via `buildDispatchPayload(..., lane: "feature")`,
+which renders the `## Codebase alignment evidence` section and fails closed if any task
+lacks `alignment` (#238). Dispatch order:
 - `parallel` — dispatch backend and frontend in the same turn.
 - `sequential-shared-first` — dispatch the shared-contract persona first, then the others.
 - Single-persona — dispatch once.

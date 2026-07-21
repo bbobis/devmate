@@ -1,0 +1,50 @@
+{
+  "_comment": "Issue 238: a captured plan.json whose tasks address every required capability with well-formed alignment evidence — reuse (target + usageEvidence), extend (target + patternRefs), add (patternRefs). Scores 1 with missing []. This is the same artifact shape validatePlannerArtifact accepts.",
+  "tasks": [
+    {
+      "description": "Persist the plan artifact and record its digest",
+      "ac": ["AC1: plan.json is written and hashed"],
+      "tddApproach": "Red: assert plan.json + hash, then persist.",
+      "persona": "backend",
+      "files": ["lib/workflow/agents/planner.mjs"],
+      "alignment": [
+        {
+          "capability": "artifact hash persistence",
+          "decision": "reuse",
+          "target": { "symbol": "recordArtifactHash", "path": "lib/task-state.mjs" },
+          "usageEvidence": ["lib/workflow/agents/planner.mjs:321"],
+          "patternRefs": [],
+          "reason": "existing helper already writes artifactHashes[name]; no new writer needed"
+        },
+        {
+          "capability": "gate transition table lookup",
+          "decision": "extend",
+          "target": { "symbol": "isLegalTransition", "path": "lib/gatectl.mjs" },
+          "usageEvidence": [],
+          "patternRefs": ["lib/gate-transitions.mjs:165"],
+          "reason": "extend the frozen table lookup the same way the spine helper does"
+        }
+      ]
+    },
+    {
+      "description": "Fail closed when the role claim is absent",
+      "ac": ["AC2: a user with no role claim is denied"],
+      "tddApproach": "Red: assert denial for a claimless user, then guard.",
+      "persona": "backend",
+      "files": ["src/cursor.mjs"],
+      "alignment": [
+        {
+          "capability": "role-claim guard",
+          "decision": "add",
+          "target": null,
+          "usageEvidence": [],
+          "patternRefs": ["src/cursor.mjs:44"],
+          "reason": "no existing guard for the absent-claim path; mirrors the clamp guard in cursor.mjs"
+        }
+      ]
+    }
+  ],
+  "assumptions": [],
+  "openRisks": [],
+  "unverified": []
+}

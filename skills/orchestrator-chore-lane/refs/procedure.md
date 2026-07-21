@@ -44,6 +44,18 @@ an un-advanced gate is never a licence to make the edit yourself.
 **6. Edit.** Dispatch `@fullstack` with `persona: 'editor'`, passing `scopePath` and
 `choreDescription`.
 
+> **Codebase alignment — lighter documented rule (not validator-enforced).** The chore
+> lane does **not** carry the feature lane's fail-closed `alignment[]` contract (#238):
+> there is no planner task here, `LANE_DISPATCH_REQUIREMENTS.chore` is `[]`,
+> `LANE_IMPL_REQUIREMENTS.chore` requires only `scope`, and `buildDispatchPayload`
+> re-asserts alignment only when `lane === 'feature'` — so a chore dispatch never fails
+> closed on a missing decision. Instead, carry this one-line directive in the dispatch:
+> **"If this chore touches executable code, name the single existing pattern/file you
+> are mirroring in your summary; pure docs/config chores may omit it."** It is enforced
+> only by this card and the human `pr-ready` gate (step 8) — a proportionate rail for
+> mechanical edits that avoids over-burdening a trivial docs/config chore with the full
+> alignment contract (#241).
+
 **7. Verify.** You have no terminal: verification is the passing test run reported
 in the `@fullstack` result (its TDD cycle ran the suite). On success, advance
 `impl-started → verification-passed`. Classify any human response at this verification

@@ -186,6 +186,57 @@ test('validateDiagnosisResult rejects malformed and accepts valid', () => {
   assert.equal(validateDiagnosisResult(makeDiagnosis()).ok, true);
 });
 
+test('validateDiagnosisResult / optional alignment: absent ok, well-formed ok, malformed rejected (issue 240)', () => {
+  // Advisory in this version: a diagnosis with NO alignment is still valid.
+  const base = makeDiagnosis();
+  assert.equal(Object.hasOwn(base, 'alignment'), false);
+  assert.equal(validateDiagnosisResult(base).ok, true);
+
+  // A present, well-formed reuse|extend|add array is accepted.
+  const wellFormed = { ...makeDiagnosis(),
+    alignment: [
+      {
+        capability: 'null guard',
+        decision: 'extend',
+        target: { symbol: 'getUser', path: 'src/app.mjs' },
+        usageEvidence: [],
+        patternRefs: ['src/app.mjs:12'],
+        reason: 'extend the existing accessor rather than add a parallel one',
+      },
+    ],
+  };
+  assert.equal(validateDiagnosisResult(wellFormed).ok, true);
+
+  // An empty array is treated as "no decisions" for an advisory field.
+  const empty = { ...makeDiagnosis(), alignment: [] };
+  assert.equal(validateDiagnosisResult(empty).ok, true);
+
+  // A present-but-ill-formed decision fails — same structural contract as the
+  // feature-lane planner task (unknown decision value).
+  const badDecision = { ...makeDiagnosis(),
+    alignment: [
+      { capability: 'x', decision: 'refactor', target: null, usageEvidence: [], patternRefs: ['a:1'], reason: 'r' },
+    ],
+  };
+  const badVerdict = validateDiagnosisResult(badDecision);
+  assert.equal(badVerdict.ok, false);
+  assert.equal(badVerdict.errors.some((e) => e.includes('alignment[0].decision must be one of')), true);
+
+  // 'add' without a patternRefs pointer fails the decision-specific rule.
+  const addNoPattern = { ...makeDiagnosis(),
+    alignment: [
+      { capability: 'y', decision: 'add', target: null, usageEvidence: [], patternRefs: [], reason: 'r' },
+    ],
+  };
+  const addVerdict = validateDiagnosisResult(addNoPattern);
+  assert.equal(addVerdict.ok, false);
+  assert.equal(addVerdict.errors.some((e) => e.includes('add requires at least one patternRefs pointer')), true);
+
+  // A present non-array alignment is rejected.
+  const notArray = { ...makeDiagnosis(), alignment: 'nope' };
+  assert.equal(validateDiagnosisResult(notArray).ok, false);
+});
+
 test('validateGrillResult rejects malformed and accepts valid', () => {
   assert.equal(validateGrillResult(null).ok, false);
   assert.equal(validateGrillResult('x').ok, false);

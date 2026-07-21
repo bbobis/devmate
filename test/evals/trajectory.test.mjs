@@ -38,6 +38,7 @@ function healthyEvents() {
   return [
     gate('no-lane', 'lane-set'),
     action('read_file'),
+    action('semantic_search'),
     gate('lane-set', 'discovery-done'),
     gate('discovery-done', 'grill-done'),
     gate('grill-done', 'plan-done'),
@@ -50,14 +51,15 @@ function healthyEvents() {
   ];
 }
 
-test('healthy synthetic trajectory scores 4/4', () => {
+test('healthy synthetic trajectory scores 5/5', () => {
   const result = scoreTrajectory({ events: healthyEvents(), thresholdCrossed: true });
   assert.deepEqual(result, {
     noEditBeforeImpl: true,
     legalTransitionSeq: true,
     budgetEventsPresent: true,
     boundedToolCalls: true,
-    score: 4,
+    alignmentBeforeImpl: true,
+    score: 5,
   });
 });
 
@@ -94,7 +96,7 @@ test('illegal gate pair fails legalTransitionSeq', () => {
   );
   const result = scoreTrajectory({ events, thresholdCrossed: true });
   assert.equal(result.legalTransitionSeq, false);
-  assert.equal(result.score, 3);
+  assert.equal(result.score, 4);
 });
 
 test('unknown or prototype-key gate names fail legalTransitionSeq without throwing', () => {
@@ -111,7 +113,7 @@ test('threshold crossed without a budget_warning fails budgetEventsPresent', () 
   const events = healthyEvents().filter((e) => e.type !== 'budget_warning');
   const result = scoreTrajectory({ events, thresholdCrossed: true });
   assert.equal(result.budgetEventsPresent, false);
-  assert.equal(result.score, 3);
+  assert.equal(result.score, 4);
 });
 
 test('no threshold crossing passes budgetEventsPresent vacuously', () => {
@@ -147,7 +149,7 @@ test('non-action events do not count toward the tool-call cap', () => {
   assert.equal(result.boundedToolCalls, true);
 });
 
-test('an empty trace scores 4/4 vacuously', () => {
+test('an empty trace scores 5/5 vacuously', () => {
   const result = scoreTrajectory({ events: [], thresholdCrossed: false });
-  assert.equal(result.score, 4);
+  assert.equal(result.score, 5);
 });

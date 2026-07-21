@@ -119,6 +119,16 @@ function createPlanArtifact() {
           "lib/workflow/agents/spec-writer.mjs",
           "test/spec-writer-agent.test.mjs",
         ],
+        alignment: [
+          {
+            capability: "spec writer output",
+            decision: "add",
+            target: null,
+            usageEvidence: [],
+            patternRefs: ["lib/workflow/agents/spec-writer.mjs:1"],
+            reason: "fixture: nothing suitable to reuse",
+          },
+        ],
       },
     ],
     assumptions: ["[UNVERIFIED] plan assumptions are still pending review"],

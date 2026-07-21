@@ -7,6 +7,7 @@
     { "name": "illegal-transition", "file": "illegal-transition.jsonl", "thresholdCrossed": true, "failsInvariant": "legalTransitionSeq" },
     { "name": "missing-budget-event", "file": "missing-budget-event.jsonl", "thresholdCrossed": true, "failsInvariant": "budgetEventsPresent" },
     { "name": "excess-tool-calls", "file": "excess-tool-calls.jsonl", "thresholdCrossed": true, "failsInvariant": "boundedToolCalls" },
+    { "name": "edit-without-alignment", "file": "edit-without-alignment.jsonl", "thresholdCrossed": true, "failsInvariant": "alignmentBeforeImpl" },
     { "name": "fanout-standard", "file": "fanout-standard.jsonl", "thresholdCrossed": false, "failsInvariant": null },
     { "name": "fanout-large", "file": "fanout-large.jsonl", "thresholdCrossed": false, "failsInvariant": null },
     { "name": "fanout-tiny", "file": "fanout-tiny.jsonl", "thresholdCrossed": false, "failsInvariant": null }

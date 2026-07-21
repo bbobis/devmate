@@ -92,6 +92,16 @@ const PLANNER_RETURN = {
       persona: 'backend',
       ac: ['AC1: a body over the cap is rejected with a 413.'],
       files: [EDIT_PATH],
+      alignment: [
+        {
+          capability: 'request body size cap',
+          decision: 'add',
+          target: null,
+          usageEvidence: [],
+          patternRefs: [`${EDIT_PATH}:1`],
+          reason: 'fixture: nothing suitable to reuse',
+        },
+      ],
     },
   ],
   assumptions: [],

@@ -101,6 +101,16 @@ test('validatePlannerArtifact / accepts valid artifact', () => {
         tddApproach: 'Jest unit tests',
         persona: 'backend',
         files: ['src/feature.ts'],
+        alignment: [
+          {
+            capability: 'feature guard',
+            decision: 'add',
+            target: null,
+            usageEvidence: [],
+            patternRefs: ['src/feature.ts:1'],
+            reason: 'no existing capability to reuse',
+          },
+        ],
       },
     ],
     assumptions: ['auth remains stable'],
@@ -300,6 +310,182 @@ test('validatePlannerArtifact / rejects task with invalid ac entries', () => {
 });
 
 // ============================================================================
+// Unit tests: codebase-alignment contract (#238)
+// ============================================================================
+
+/**
+ * Build a validator-valid single-task artifact, overriding the task's
+ * `alignment` with the caller-supplied value.
+ * @param {unknown} alignment
+ * @returns {Record<string, unknown>}
+ */
+function planWithAlignment(alignment) {
+  return {
+    tasks: [
+      {
+        description: 'Implement feature',
+        ac: ['AC1'],
+        tddApproach: 'Red first',
+        persona: 'backend',
+        files: ['src/feature.mjs'],
+        alignment,
+      },
+    ],
+    assumptions: [],
+    openRisks: [],
+    unverified: [],
+  };
+}
+
+test('validatePlannerArtifact / rejects task with missing alignment', () => {
+  const artifact = planWithAlignment(undefined);
+  const verdict = validatePlannerArtifact(artifact);
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.errors.some((e) => e.includes('tasks[0].alignment must be an array')), true);
+});
+
+test('validatePlannerArtifact / rejects task with empty alignment array', () => {
+  const verdict = validatePlannerArtifact(planWithAlignment([]));
+  assert.equal(verdict.ok, false);
+  assert.equal(
+    verdict.errors.some((e) => e.includes('tasks[0].alignment must be a non-empty array')),
+    true,
+  );
+});
+
+test('validatePlannerArtifact / rejects reuse decision without a target', () => {
+  const verdict = validatePlannerArtifact(
+    planWithAlignment([
+      {
+        capability: 'hash persistence',
+        decision: 'reuse',
+        target: null,
+        usageEvidence: ['lib/task-state.mjs:1'],
+        patternRefs: [],
+        reason: 'reuse the existing writer',
+      },
+    ]),
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(
+    verdict.errors.some((e) => e.includes('reuse requires target.symbol and target.path')),
+    true,
+  );
+});
+
+test('validatePlannerArtifact / rejects reuse decision without usageEvidence', () => {
+  const verdict = validatePlannerArtifact(
+    planWithAlignment([
+      {
+        capability: 'hash persistence',
+        decision: 'reuse',
+        target: { symbol: 'recordArtifactHash', path: 'lib/task-state.mjs' },
+        usageEvidence: [],
+        patternRefs: [],
+        reason: 'reuse the existing writer',
+      },
+    ]),
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(
+    verdict.errors.some((e) => e.includes('reuse requires at least one usageEvidence pointer')),
+    true,
+  );
+});
+
+test('validatePlannerArtifact / rejects add decision without patternRefs', () => {
+  const verdict = validatePlannerArtifact(
+    planWithAlignment([
+      {
+        capability: 'role-claim guard',
+        decision: 'add',
+        target: null,
+        usageEvidence: [],
+        patternRefs: [],
+        reason: 'no existing guard',
+      },
+    ]),
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(
+    verdict.errors.some((e) => e.includes('add requires at least one patternRefs pointer')),
+    true,
+  );
+});
+
+test('validatePlannerArtifact / rejects an unknown decision value', () => {
+  const verdict = validatePlannerArtifact(
+    planWithAlignment([
+      {
+        capability: 'x',
+        decision: 'refactor',
+        target: null,
+        usageEvidence: [],
+        patternRefs: ['lib/x.mjs:1'],
+        reason: 'y',
+      },
+    ]),
+  );
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.errors.some((e) => e.includes('decision must be one of')), true);
+});
+
+test('validatePlannerArtifact / accepts a well-formed mixed reuse+add alignment', () => {
+  const verdict = validatePlannerArtifact(
+    planWithAlignment([
+      {
+        capability: 'artifact hash persistence',
+        decision: 'reuse',
+        target: { symbol: 'recordArtifactHash', path: 'lib/task-state.mjs' },
+        usageEvidence: ['lib/workflow/agents/planner.mjs:321'],
+        patternRefs: [],
+        reason: 'existing helper already writes artifactHashes[name]',
+      },
+      {
+        capability: 'role-claim guard',
+        decision: 'add',
+        target: null,
+        usageEvidence: [],
+        patternRefs: ['src/cursor.mjs:44'],
+        reason: 'no existing guard for the absent-claim path',
+      },
+    ]),
+  );
+  assert.equal(verdict.ok, true);
+  assert.deepEqual(verdict.errors, []);
+});
+
+test('createPlannerArtifact / round-trips alignment and drops malformed entries', () => {
+  const artifact = createPlannerArtifact({
+    tasks: [
+      {
+        description: 'Task',
+        ac: ['AC1'],
+        tddApproach: 'Red first',
+        persona: 'backend',
+        files: ['src/feature.mjs'],
+        alignment: [
+          {
+            capability: 'guard',
+            decision: 'add',
+            target: null,
+            usageEvidence: [],
+            patternRefs: ['src/feature.mjs:1'],
+            reason: 'no existing capability',
+          },
+          // malformed (non-object) — dropped by normalizeAlignment
+          'not an object',
+        ],
+      },
+    ],
+  });
+
+  assert.equal(artifact.tasks[0]?.alignment.length, 1);
+  assert.equal(artifact.tasks[0]?.alignment[0]?.decision, 'add');
+  assert.equal(validatePlannerArtifact(artifact).ok, true);
+});
+
+// ============================================================================
 // Integration tests: dispatch guard
 // ============================================================================
 
@@ -312,6 +498,16 @@ test('integration / planner artifact satisfies orchestrator dispatch guard', () 
         tddApproach: 'Jest + supertest',
         persona: 'fullstack',
         files: ['src/login.ts'],
+        alignment: [
+          {
+            capability: 'login handler',
+            decision: 'add',
+            target: null,
+            usageEvidence: [],
+            patternRefs: ['src/login.ts:1'],
+            reason: 'no existing capability to reuse',
+          },
+        ],
       },
     ],
     assumptions: ['LDAP integration exists'],
@@ -351,6 +547,16 @@ test('integration / planner artifact remains valid across revision cycle', () =>
         tddApproach: 'Jest',
         persona: 'backend',
         files: ['src/api.ts'],
+        alignment: [
+          {
+            capability: 'api endpoint',
+            decision: 'add',
+            target: null,
+            usageEvidence: [],
+            patternRefs: ['src/api.ts:1'],
+            reason: 'no existing capability to reuse',
+          },
+        ],
       },
     ],
     assumptions: ['Node 24+ available'],
@@ -369,6 +575,16 @@ test('integration / planner artifact remains valid across revision cycle', () =>
         tddApproach: 'Unit test: jest; Integration test: supertest with mock DB; E2E: playwright',
         persona: 'backend',
         files: ['src/api.ts', 'src/api.test.ts', 'e2e/api.spec.ts'],
+        alignment: [
+          {
+            capability: 'api endpoint',
+            decision: 'add',
+            target: null,
+            usageEvidence: [],
+            patternRefs: ['src/api.ts:1'],
+            reason: 'no existing capability to reuse',
+          },
+        ],
       },
     ],
     assumptions: ['Node 24+ available', 'PostgreSQL 14+ available'],

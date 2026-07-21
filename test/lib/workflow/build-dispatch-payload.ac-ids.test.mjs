@@ -67,6 +67,7 @@ function twoTaskPlan() {
         tddApproach: 'unit tests',
         persona: 'backend',
         files: ['src/a.mjs'],
+        alignment: [],
       },
       {
         description: 'Task B',
@@ -74,6 +75,7 @@ function twoTaskPlan() {
         tddApproach: 'unit tests',
         persona: 'frontend',
         files: ['src/b.mjs'],
+        alignment: [],
       },
     ],
     assumptions: [],

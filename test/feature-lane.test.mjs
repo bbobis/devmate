@@ -137,6 +137,16 @@ test('feature lane e2e uses discovery -> grill -> plan -> critique -> spec -> im
           tddApproach: 'Write failing lane tests before implementation updates.',
           persona: 'backend',
           files: ['lib/workflow/lanes/feature.mjs', 'test/feature-lane.test.mjs'],
+          alignment: [
+            {
+              capability: 'lane orchestration',
+              decision: 'add',
+              target: null,
+              usageEvidence: [],
+              patternRefs: ['lib/workflow/lanes/feature.mjs:1'],
+              reason: 'fixture: nothing suitable to reuse',
+            },
+          ],
         },
       ],
       assumptions: ['Discovery output is fresh'],

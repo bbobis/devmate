@@ -530,6 +530,16 @@ describe('E2E — a plan that yields no scope contract leaves it unwritten, loud
           persona: 'backend',
           ac: ['AC1: nothing to edit.'],
           files: [],
+          alignment: [
+            {
+              capability: 'fixture capability',
+              decision: 'add',
+              target: null,
+              usageEvidence: [],
+              patternRefs: ['lib/index.mjs:1'],
+              reason: 'fixture: nothing suitable to reuse',
+            },
+          ],
         },
       ],
       assumptions: [],

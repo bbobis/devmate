@@ -181,6 +181,16 @@ describe('E2E adversarial — a planner `files` path that escapes the workspace 
           persona: 'backend',
           ac: ['AC1: x'],
           files: ['../../etc/passwd'],
+          alignment: [
+            {
+              capability: 'fixture capability',
+              decision: 'add',
+              target: null,
+              usageEvidence: [],
+              patternRefs: ['lib/index.mjs:1'],
+              reason: 'fixture: nothing suitable to reuse',
+            },
+          ],
         },
       ],
       assumptions: [],

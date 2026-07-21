@@ -38,6 +38,7 @@ The devmate-orchestrator uses this field to validate dispatch results.
 | `fixerRecommendation` | Free-text guidance for the fixer. |
 | `allowedPaths` | **Exact file paths** the fix may touch (see "Scope" below). |
 | `allowedGlobs` | **Glob patterns** bounding the change surface (see "Scope" below). |
+| `alignment` | *(Optional — advisory)* `reuse \| extend \| add` decisions for the fix, same shape as the planner task's. See "Codebase alignment" below. |
 | `taskId` | Owning task ID. |
 | `schemaVersion` | `1`. |
 
@@ -81,3 +82,42 @@ Rules:
   sit here was therefore unrunnable: the file never appeared, the bug lane ran
   with no boundary at all, and the dispatch gate — which requires that file —
   refused `@fullstack` outright (#92). Return the boundary; the hook persists it.
+
+## Codebase alignment (optional — advisory in this version)
+
+Optionally, for each capability the fix needs, record one `reuse | extend | add`
+decision so the fixer reuses what exists and mirrors local patterns instead of
+re-implementing them. Evidence is pointer-based (`path` or `path:line`) — never
+pasted source. This carries the feature-lane codebase-alignment contract (#238)
+into the bug lane, scoped by the same `allowedPaths`/`allowedGlobs` boundary
+above.
+
+- **reuse** — call/import an existing symbol as-is. Requires `target: {symbol, path}`
+  plus ≥1 `usageEvidence` pointer showing where it is defined or used.
+- **extend** — modify or add to an existing symbol/module. Requires
+  `target: {symbol, path}` plus ≥1 `patternRefs` pointer to a nearby exemplar of
+  the same kind of change.
+- **add** — no suitable capability exists, so brand-new code is warranted.
+  Requires ≥1 `patternRefs` pointer to the nearest analogue to mirror, and a
+  `reason` recording the search that found nothing suitable (`target` may be `null`).
+
+The field is **advisory** in this version: the bug lane does not yet fail closed
+when it is absent, and it will be promoted to required once the feature-lane
+rollout is proven. When you *do* include it, each decision is validated by the
+same structural contract the planner task uses — an ill-formed decision fails
+validation. An absent `alignment` is accepted.
+
+```json
+{
+  "alignment": [
+    {
+      "capability": "batch cursor clamp",
+      "decision": "extend",
+      "target": { "symbol": "clampCursor", "path": "lib/cursor.mjs" },
+      "usageEvidence": [],
+      "patternRefs": ["lib/cursor.mjs:44"],
+      "reason": "The overflow is a missing branch in the existing clamp; extend it rather than add a parallel guard."
+    }
+  ]
+}
+```

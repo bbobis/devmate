@@ -24,7 +24,8 @@
  */
 import { skipUnlessNode } from '../../lib/test-utils/node-guard.mjs';
 import { validateHookOutput } from '../../lib/hooks/output-schema.mjs';
-import { test } from 'node:test';
+import { markDevmateSession, clearDevmateSession } from '../../lib/hooks/session-marker.mjs';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -36,6 +37,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(__dirname, '..', '..', 'hooks', 'post-tool-use.mjs');
 
 const TASK_ID = 'persona-regression-1';
+
+// The PostToolUse hook stays fully inert unless the payload's session is a marked
+// devmate session (lib/hooks/session-marker.mjs) — no marker ⇒ no block. This
+// suite drives the REAL hook, so it must own its marker rather than piggy-back on
+// one an unrelated e2e suite happens to have dropped in os.tmpdir(): that ambient
+// coupling made the suite pass only when it ran in the same job after the e2e
+// tests, and fail in an isolated CI job. A DEDICATED session id (never shared with
+// the e2e harness) keeps the mark/clear from racing another test file under
+// node:test's parallel workers.
+const SESSION_ID = 'persona-boundary-inert-regression';
+
+before(() => markDevmateSession(SESSION_ID, 'fullstack'));
+after(() => clearDevmateSession(SESSION_ID));
 
 /**
  * A workspace at `impl-started` with two personas that partition the tree, and a
@@ -89,7 +103,7 @@ function workspace(personas, mode = 'block') {
 function capturedShapePayload(root, contract) {
   return JSON.stringify({
     hook_event_name: 'PostToolUse',
-    session_id: 'fd634936-8166-4295-a74f-2a397c9c5226',
+    session_id: SESSION_ID,
     tool_name: 'runSubagent',
     tool_input: '...',
     tool_response:

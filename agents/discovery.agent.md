@@ -44,6 +44,13 @@ The devmate-orchestrator uses this field to validate dispatch results.
 - Any item without direct code/doc evidence goes to `unverified` and is tagged
   `[UNVERIFIED]` in the item text.
 - No inference presented as certainty.
+- **Surface reuse candidates & pattern exemplars (#238).** When you find an
+  existing capability the feature could reuse, or a nearby file whose structure
+  a new capability should mirror, emit it as an ordinary claim — phrase the
+  `fact` like `existing capability: <symbol> handles <intent>` (or
+  `pattern exemplar: <file> shows <shape>`) with the defining `path`. This is
+  raw material the planner turns into a `reuse | extend | add` decision; the
+  claim shape is unchanged (no new field).
 
 ## Procedure
 

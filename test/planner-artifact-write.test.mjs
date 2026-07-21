@@ -89,6 +89,16 @@ describe('planner artifact read/write helpers', () => {
             tddApproach: 'node:test unit assertions',
             persona: 'backend',
             files: ['lib/workflow/agents/planner.mjs'],
+            alignment: [
+              {
+                capability: 'plan artifact persistence',
+                decision: 'add',
+                target: null,
+                usageEvidence: [],
+                patternRefs: ['lib/workflow/agents/planner.mjs:1'],
+                reason: 'fixture: nothing suitable to reuse',
+              },
+            ],
           },
         ],
         assumptions: ['state file exists before planner run'],

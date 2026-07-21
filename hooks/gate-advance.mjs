@@ -255,6 +255,36 @@ function evidenceFailure(failure) {
 }
 
 /**
+ * The message a model gets on a PARTIAL projection: the primary artifact landed, but its
+ * secondary scope.md was refused because the file list was empty.
+ *
+ * This is case B of the ProjectionResult taxonomy (`artifact !== null && reason !== null`).
+ * It is NOT an evidence failure — the plan/diagnosis is valid and IS on disk — so it must not
+ * read like one. But it is still blocking: implementation cannot start without scope.md, and the
+ * only silent alternative is the exact failure this whole area exists to end (the run dies later
+ * at the dispatch gate with "scope.md is missing" and no record of why). The fix is to re-dispatch
+ * the author with a non-empty file list — never to hand-write scope.md, which would fabricate the
+ * edit boundary the guard exists to enforce.
+ *
+ * @param {{ agentName: string, artifact: string, gate: string, reason: string }} partial
+ * @returns {string}
+ */
+function scopeRegenerationAlert(partial) {
+  const who = `@${partial.agentName}`;
+  const redispatch =
+    partial.agentName === 'diagnose'
+      ? `re-dispatch ${who} (bug lane) so its allowedPaths/allowedGlobs name the files the fix will touch`
+      : `re-dispatch ${who} so its tasks name the files the change will touch (tasks[].files)`;
+  return (
+    `[devmate] ${who} produced ${partial.artifact}, but scope.md was NOT written.\n` +
+    `  why: ${partial.reason}\n` +
+    `  effect: implementation cannot start — the implementation dispatch gate (@fullstack / its persona wrappers) requires a non-empty scope.md, and it is absent. The gate stays at "${partial.gate}".\n` +
+    `  do: ${redispatch}; the hook re-derives scope.md from that list.\n` +
+    `  do NOT: hand-write scope.md or approve past the missing scope — a hand-authored scope fabricates the boundary the guard exists to enforce.`
+  );
+}
+
+/**
  * PostToolUse hook entry point.
  *
  * @param {GateAdvanceEvent} event
@@ -375,8 +405,12 @@ export async function handlePostToolUse(event, opts = {}) {
         if (projected.reason !== null) {
           stderr.write(
             `${JSON.stringify({
-              event:
-                projected.artifact === null
+              // A no-projector return (case C) carries a `reason` too, but it is an expected
+              // no-op, not a failure: give it its own benign event so it never reads as the
+              // `no_projection` evidence-failure that a projecting agent's null artifact means.
+              event: projected.noProjector
+                ? 'gate-advance.no_projector'
+                : projected.artifact === null
                   ? 'gate-advance.no_projection'
                   : 'gate-advance.partial_projection',
               agentName,
@@ -400,13 +434,37 @@ export async function handlePostToolUse(event, opts = {}) {
           await appendRubberDuckTrace(repoRoot, state.taskId, projected.artifact, projected.body);
         }
 
+        // Case B — a PARTIAL projection: the primary artifact (plan.json / diagnosis.json)
+        // landed, but its secondary scope.md was refused because the file list was empty.
+        // The stderr `partial_projection` line above goes to the Output panel, which on a
+        // clean exit the model never reads — so it must ALSO be said on the channel the model
+        // reads, or the run dies far downstream at the dispatch gate ("scope.md is missing")
+        // with no record of why. Setting `alert` flips this turn to EXIT_BLOCK; the plan
+        // itself is already on disk and is not unwound. Cases B and D are mutually exclusive
+        // (artifact non-null vs null), so exactly one alert is set per invocation.
+        if (projected.artifact !== null && projected.reason !== null) {
+          alert = scopeRegenerationAlert({
+            agentName,
+            artifact: projected.artifact,
+            gate: state.workflowGate,
+            reason: projected.reason,
+          });
+        }
+
         // A worker ran, and produced nothing the workflow can use. THIS is the
         // failure the user actually hit, and the reason it cost hours: the note
         // above goes to the Output panel, `main()` returned 0, and the model was
         // told nothing at all. It saw a completed dispatch and an unmoved gate,
         // concluded its agents were broken, and started doing the work inline.
         // Silence did that. So say it on the channel the model reads.
-        if (projected.artifact === null) {
+        //
+        // But ONLY for a projecting agent (case D). A no-projector return (case C —
+        // fullstack, tech-design, ui-ux, security, spec-writer) also has a null artifact
+        // and would trip this same block, blocking the orchestrator after a SUCCESSFUL
+        // dispatch and telling it to re-dispatch an agent that never had an artifact to
+        // produce. `noProjector` is exactly the discriminant that keeps this loud for real
+        // evidence failures and silent for agents that legitimately project nothing.
+        if (projected.artifact === null && !projected.noProjector) {
           alert = evidenceFailure({
             agentName,
             gate: state.workflowGate,

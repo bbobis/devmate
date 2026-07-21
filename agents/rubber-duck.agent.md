@@ -43,6 +43,12 @@ Rules:
 
 - Do NOT implement. Do NOT modify files.
 - `REQUEST_REVISION` must name specific changes needed.
+- **Codebase alignment (#238):** `REQUEST_REVISION:<reason>` when a plan task
+  lacks `alignment[]`, or lists an `add` decision whose `reason` does not
+  justify why reuse/extend was rejected, or names a `reuse`/`extend` target with
+  no supporting pointer. Reuse of an existing capability beats re-implementing
+  it; say so in the reason. (The gap rides in the verdict reason — there is no
+  separate alignment field on `CritiqueResult`.)
 - **Two-revision limit**: after `iterationNumber === 2`, fold remaining open items into
   `backwardsCompatRisks` and emit `APPROVE_PLAN` — do not block indefinitely.
 

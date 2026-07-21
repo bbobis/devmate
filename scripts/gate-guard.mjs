@@ -8,7 +8,9 @@ import { readTaskState, mutateTaskStateUnderLock } from '../lib/task-state.mjs';
 import {
   loadDevmateConfig,
   resolveSessionArtifactPolicy,
+  resolveDispatchSequencingMode,
 } from '../lib/config/devmate-config.mjs';
+import { evaluateDispatchSequencing } from '../lib/workflow/dispatch-sequencing.mjs';
 import { pathEscapesWorkspace, readScopeForTask } from '../lib/workflow/scope.mjs';
 import {
   isImplementationDispatch,
@@ -52,7 +54,7 @@ import { getOwn, isPlainRecord } from '../lib/object-utils.mjs';
  * still stands. Best-effort throughout: a failing or throwing audit must never
  * block or crash the guard.
  *
- * @param {'dispatch'|'guard'} source
+ * @param {'dispatch'|'guard'|'sequencing'} source
  * @param {HookPayload} payload
  * @param {TaskState|null} state
  * @param {string} root  Absolute workspace root (resolveHookRoot).
@@ -331,6 +333,40 @@ export async function main(_args) {
     }
   }
 
+  // RC-3 (#231): analysis-dispatch sequencing. An analysis agent (rubber-duck /
+  // planner / spec-writer) dispatched before its prerequisite internal gate runs,
+  // produces an artifact that cannot advance the gate, and is wasted with no
+  // signal — unlike the implementation dispatch above, nothing structurally stops
+  // it. `dispatchSequencing` selects the posture: 'off' (ignore), 'warn' (default —
+  // a model-visible advisory carried on the final allow's additionalContext), or
+  // 'block' (deny). Fails open when there is no task state (analysis legitimately
+  // precedes a task) or the agent has no gate minimum — the evaluator only flags a
+  // dispatch it is confident is premature.
+  /** @type {string|undefined} */
+  let sequencingContext;
+  if (state !== null && typeof payload.agentName === 'string') {
+    const seqMode = resolveDispatchSequencingMode(configResult.ok ? configResult.config : null);
+    if (seqMode !== 'off') {
+      const seq = evaluateDispatchSequencing({
+        agentName: payload.agentName,
+        lane: state.lane,
+        workflowGate: state.workflowGate,
+      });
+      if (!seq.inOrder) {
+        if (seqMode === 'block') {
+          await auditDeny('sequencing', payload, state, root);
+          process.stdout.write(
+            JSON.stringify(toPreToolUseOutput({ decision: 'deny', reason: seq.reason })) + '\n',
+          );
+          return 0;
+        }
+        // warn: allow the dispatch, but ride the advisory to the model on the
+        // final allow output below.
+        sequencingContext = seq.reason;
+      }
+    }
+  }
+
   // #93: the session-artifact rule's three inputs, supplied at last. They had NO
   // producer anywhere in the repo — `sessionArtifactPaths` was `[]` and
   // `activeAgent` `undefined` on every real call — so Rule 4 never ran and any
@@ -361,7 +397,12 @@ export async function main(_args) {
     await auditDeny('guard', payload, state, root);
   }
 
-  process.stdout.write(JSON.stringify(toPreToolUseOutput(decision)) + '\n');
+  // On an allow, `sequencingContext` (set above when a warn-mode out-of-order
+  // analysis dispatch was detected) rides along as the model-visible advisory. A
+  // deny from the rule ladder wins and drops it — the deny reason matters more.
+  process.stdout.write(
+    JSON.stringify(toPreToolUseOutput(decision, sequencingContext)) + '\n',
+  );
   return 0;
 }
 

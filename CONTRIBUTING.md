@@ -20,12 +20,13 @@ overrides it.
 git clone https://github.com/LP-GTM-Product-Engineering/devmate
 cd devmate
 npm install          # Node 24+ required (see §3)
-npm run verify       # the single gate — run this before every push
+npm run verify       # the local gate — run this before every push
 ```
 
-`npm run verify` is the one command that must pass. It is exactly what CI runs
-(see §7), so a green `verify` locally means a green PR. Useful sub-commands while
-iterating:
+`npm run verify` is the one command you must pass locally. CI runs the **same**
+checks — fanned out across parallel jobs, plus extra guard/eval scripts (see §7) —
+so a green `verify` is necessary but not sufficient; CI is a superset. Useful
+sub-commands while iterating:
 
 | Command | What it does |
 | --- | --- |
@@ -255,18 +256,27 @@ if (isMainModule(import.meta.url)) {
 
 ## 7. Continuous integration
 
-CI (`.github/workflows/ci.yml`) has two jobs:
+CI (`.github/workflows/ci.yml`) runs the same checks as `npm run verify`, but fanned
+out across **parallel jobs** so wall-clock is `max(job)` rather than one long serial
+chain. All jobs share setup via the `./.github/actions/setup` composite action
+(checkout is per-job; then Node 24 + npm cache + install). A `concurrency` block
+cancels a PR's own superseded run on re-push (never a `main` run). The jobs:
 
-- **`verify`** (Ubuntu, Node 24) runs `npm run verify` — the same command you run
-  locally — then a set of drift/consistency guards:
-  - `check-memory-path-refs` — no hardcoded non-canonical memory paths.
-  - `generate-current-behavior` + `git diff --exit-code` — `docs/CURRENT_BEHAVIOR.md`
-    must match what the metadata generates.
-  - `check-docs-drift` — docs may not assert hook events, config keys, or state
-    names outside verified ground truth.
-  - `validate-agents` — every `*.agent.md` frontmatter must match its body.
-  - `worker-contract-check` / `check-contracts` — artifact/worker return shapes
-    obey their contracts.
+- **`lint`** / **`typecheck`** / **`test`** (Ubuntu, Node 24) — `npm run lint`,
+  `npm run typecheck`, and the full `node --test` suite, each on its own runner.
+- **`guards`** (Ubuntu, Node 24) — the drift/consistency guards and `npm audit`:
+  `check-contracts` / `worker-contract-check` (artifact/worker return shapes),
+  `check-artifact-graph` / `check-artifact-allowlist`, `check-docs-drift` (docs may
+  not assert hook events, config keys, or state names outside verified ground truth),
+  `check-script-refs`, `check-file-budgets`, `check-entrypoint-guard`,
+  `check-contract-drift`, `check-state-writers`, `check-memory-path-refs` (no
+  hardcoded non-canonical memory paths), `generate-current-behavior` +
+  `git diff --exit-code` (`docs/CURRENT_BEHAVIOR.md` must match the generated
+  metadata), `validate-agents` (every `*.agent.md` frontmatter must match its body),
+  `check-backend-ready`, `check-generated-docs`, `check-settings-keys`,
+  `validate-model-policy`, `validate-skill-split`.
+- **`evals`** (Ubuntu, Node 24) — `eval-model-routing`, the issue-quality evals, and
+  the regression suites; uploads the two result artifacts.
 - **`hooks-smoke`** (Ubuntu **+ Windows + macOS**, Node 24) runs the hook
   registration and spawn smoke tests so hooks work cross-platform.
 

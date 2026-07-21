@@ -371,9 +371,13 @@ from the Router output contract.
    hook derives it from the discovery returns; you never advance a gate).
    `@tech-design`, `@rubber-duck`, and the planner consume that artifact.
 4. Dispatch `@rubber-duck` with `mode=grill`. Grill produces a `GrillResult`
-   with `assumptions`, `missingRequirements`, `edgeCases`, `cornerCases`,
-   `securityRisks`, and `blockingQuestions`. Emit a `grill_complete` trace
-   event (see E11-3). Any `blockingQuestions` are folded into
+   with all nine arrays — `assumptions`, `missingRequirements`, `edgeCases`,
+   `cornerCases`, `securityRisks`, `uxRisks`, `blockingQuestions`,
+   `recommendedDecisions`, `unverifiedItems` — each required even when empty,
+   `unverifiedItems` entries prefixed `[UNVERIFIED]`. Owned by
+   `agents/rubber-duck.agent.md` / `lib/workflow/agent-contracts.mjs`; a shorter
+   list fails `validateGrillResult` and stalls the gate. Emit a `grill_complete`
+   trace event (see E11-3). Any `blockingQuestions` are folded into
    `SpecContent.assumptions` for the human to resolve at the `spec-draft`
    review — they do not block this lane.
 5. **[INTERNAL GATE] `grill-done`** — advances **by itself**, in the
@@ -507,9 +511,13 @@ followed in order. Hard rules — not guidelines:
    `DiagnosisResult` is validated by `validateDiagnosisResult()`. Validation
    errors halt the lane with a user-visible schema error message.
 4. Dispatch `@rubber-duck` with `mode=grill` to challenge diagnosis assumptions
-   and edge cases. Grill produces a `GrillResult` with `assumptions`,
-   `missingRequirements`, `edgeCases`, `cornerCases`, and `securityRisks`.
-   Emit a `grill_complete` trace event.
+   and edge cases. Grill produces the same nine-array `GrillResult` —
+   `assumptions`, `missingRequirements`, `edgeCases`, `cornerCases`,
+   `securityRisks`, `uxRisks`, `blockingQuestions`, `recommendedDecisions`,
+   `unverifiedItems` — each required even when empty, `unverifiedItems` entries
+   prefixed `[UNVERIFIED]`; owned by `agents/rubber-duck.agent.md` /
+   `lib/workflow/agent-contracts.mjs`, and a shorter list fails
+   `validateGrillResult`. Emit a `grill_complete` trace event.
 5. **[INTERNAL GATE] `grill-done`** — advances **by itself**, in the
    `gate-advance` hook, once `.devmate/state/grill-result.json` lands. The
    artifact is the evidence, never your say-so.

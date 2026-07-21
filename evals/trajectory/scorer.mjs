@@ -24,6 +24,23 @@ import { isSourceEditTool } from '../../lib/gate-guard-core.mjs';
 export const TOOL_CALL_CAP = 50;
 
 /**
+ * Action tool names that count as a codebase-alignment search (#238): the
+ * worker looked for an existing capability / pattern before writing. Covers
+ * the card tool ids (`search/codebase`, `search/usages`) and the underlying
+ * VS Code Copilot search tools recorded in traces.
+ * @type {ReadonlySet<string>}
+ */
+const SEARCH_ACTION_TYPES = new Set([
+  'search/codebase',
+  'search/usages',
+  'semantic_search',
+  'grep_search',
+  'file_search',
+  'search_workspace_symbols',
+  'list_code_usages',
+]);
+
+/**
  * A recorded trajectory to score.
  * @typedef {Object} TrajectoryObservations
  * @property {Array<Record<string, unknown>>} events  Parsed trace events in append order.
@@ -66,6 +83,11 @@ function isLegalGatePair(event) {
  *   crossed a threshold (E9-07); vacuously true otherwise.
  * - `boundedToolCalls` — recorded `action` events (one per tool call) stay at
  *   or under {@link TOOL_CALL_CAP}.
+ * - `alignmentBeforeImpl` — a codebase-search action (reuse/pattern lookup,
+ *   {@link SEARCH_ACTION_TYPES}) precedes the first source-edit action (#238);
+ *   vacuously true when the trace makes no source edit. Distinct from
+ *   `noEditBeforeImpl` (gate ordering) — this expresses "aligned before
+ *   editing", which gate ordering cannot see.
  *
  * @param {TrajectoryObservations} obs
  * @returns {TrajectoryEvalResult}
@@ -80,6 +102,15 @@ export function scoreTrajectory(obs) {
   const noEditBeforeImpl = !preImpl.some(
     (e) => e.type === 'action' && isSourceEditTool(String(e.actionType ?? ''))
   );
+
+  const firstEditIdx = events.findIndex(
+    (e) => e.type === 'action' && isSourceEditTool(String(e.actionType ?? ''))
+  );
+  const firstSearchIdx = events.findIndex(
+    (e) => e.type === 'action' && SEARCH_ACTION_TYPES.has(String(e.actionType ?? ''))
+  );
+  const alignmentBeforeImpl =
+    firstEditIdx === -1 || (firstSearchIdx !== -1 && firstSearchIdx < firstEditIdx);
 
   const legalTransitionSeq = events
     .filter((e) => e.type === 'gate_transition')
@@ -96,7 +127,15 @@ export function scoreTrajectory(obs) {
     legalTransitionSeq,
     budgetEventsPresent,
     boundedToolCalls,
+    alignmentBeforeImpl,
   ].filter(Boolean).length;
 
-  return { noEditBeforeImpl, legalTransitionSeq, budgetEventsPresent, boundedToolCalls, score };
+  return {
+    noEditBeforeImpl,
+    legalTransitionSeq,
+    budgetEventsPresent,
+    boundedToolCalls,
+    alignmentBeforeImpl,
+    score,
+  };
 }

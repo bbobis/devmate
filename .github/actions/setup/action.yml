@@ -1,0 +1,27 @@
+# Composite action: shared Node 24 (npm-cached) setup + dependency install.
+# Every CI job's setup is identical, so it lives here once (DRY / ETC). Referenced
+# as `- uses: ./.github/actions/setup` — the calling job must run `actions/checkout`
+# FIRST, since a local composite action can only be resolved once the repo is on
+# disk. Runs on Linux, macOS, and Windows — the install step uses `shell: bash`
+# (available on all three GitHub runners) so the lockfile branch is portable.
+name: Setup
+description: Set up Node 24 with npm caching and install dependencies (checkout first).
+runs:
+  using: composite
+  steps:
+    # Match the project's engines field (Node 24 Active LTS). `cache: npm` keys on
+    # package-lock.json, so repeat runs restore the dependency download.
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: 'npm'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        if [ -f package-lock.json ]; then
+          npm ci
+        else
+          npm install
+        fi

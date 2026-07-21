@@ -54,13 +54,21 @@ hardcoded stack.
 ## Pre-flight
 
 1. Confirm the dispatch context contains a `TDD_PREAMBLE_REQUIRED` block.
-2. For each AC, locate the `tddApproach.testFiles` list in your dispatch payload.
-3. Create or update those test files before implementation edits.
-4. Run the consumer-provided `unitTest` command and confirm RED.
-5. Write the minimal implementation change to reach GREEN.
-6. Run `unitTest` again and confirm GREEN.
-7. If `typeCheck` is provided, run it after tests pass.
-8. Do not report completion unless the test and verification steps passed.
+2. Read the `## Codebase alignment evidence` section (when present). For each
+   listed capability: **reuse** or **extend** the named `target` rather than
+   re-implementing it; for an **add** decision, confirm no suitable existing
+   capability before writing new code, and mirror the `patternRefs` analogue's structure
+   (and its test shape). Re-open each pointer before relying on it — if a pointer
+   no longer resolves, treat that decision as unproven and say so in
+   `payload.alignmentDecisions` (mark the item `[UNVERIFIED]`). Never
+   re-implement a capability listed as `reuse`.
+3. For each AC, locate the `tddApproach.testFiles` list in your dispatch payload.
+4. Create or update those test files before implementation edits.
+5. Run the consumer-provided `unitTest` command and confirm RED.
+6. Write the minimal implementation change to reach GREEN.
+7. Run `unitTest` again and confirm GREEN.
+8. If `typeCheck` is provided, run it after tests pass.
+9. Do not report completion unless the test and verification steps passed.
 
 Note: frontmatter `skills` declarations are not auto-injected into `runSubagent`
 contexts. The devmate-orchestrator must embed required skill content in the dispatch payload.
@@ -75,7 +83,7 @@ level. The devmate-orchestrator uses them to validate dispatch results.
   "agentName": "fullstack",
   "persona": "backend",
   "status": "ok",
-  "payload": { "verification": "...", "changedFiles": ["path/to/file"], "summary": "...", "completedAcIds": [1, 2] }
+  "payload": { "verification": "...", "changedFiles": ["path/to/file"], "summary": "...", "completedAcIds": [1, 2], "alignmentDecisions": [] }
 }
 ```
 
@@ -112,6 +120,14 @@ level. The devmate-orchestrator uses them to validate dispatch results.
   harness re-verifies against trace evidence — the orchestrator records each
   one so a resumed session skips completed ACs; you never write trace or task
   state yourself.
+
+- `payload.alignmentDecisions` (`AlignmentDecision[]`) — **advisory**: echo the
+  reuse/extend/add decisions you acted on from the `## Codebase alignment
+  evidence` section, same pointer-based shape as the planner emits (`capability`,
+  `decision`, `target`, `usageEvidence`, `patternRefs`, `reason`). This is
+  evidence for the reviewer and rubber-duck critique, not a hard-validated field;
+  omit it (or send `[]`) when the dispatch carried no alignment section. Mark any
+  decision whose pointer no longer resolves `[UNVERIFIED]`.
 
 - Subagent dispatch and self-referential `agents` field, and the
   `chat.subagents.allowInvocationsFromSubagents` setting:

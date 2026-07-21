@@ -6,13 +6,57 @@ on:
   push:
     branches: [main]
 
+# Cancel a PR's own superseded run when it is re-pushed. Never cancels a `main`
+# run (a landed commit's gate must always complete).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The single serial `verify` job was split into independent lanes (lint / typecheck /
+# test / guards / evals) that run concurrently — wall-clock is now max(lane), not
+# sum(step). Every check runs exactly once; each job checks out then reuses the
+# shared ./.github/actions/setup composite (Node 24 + npm cache + install).
 jobs:
-  verify:
-    name: verify (lint + typecheck + tests)
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # eslint flat config: Node-target (eslint-plugin-n) + 3 security plugins.
+      - name: Lint
+        run: npm run lint
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # JSDoc type check, no emit.
+      - name: Typecheck
+        run: npm run typecheck
+
+  test:
+    name: test (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # Full suite. Node parallelizes test files across the runner's cores.
+      - name: Test
+        run: npm test
+
+  guards:
+    name: guards (contracts + drift + budgets + audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       # Fail if any tracked file is not normalized to LF per .gitattributes.
       # Line endings otherwise depend on each contributor's core.autocrlf, so a
@@ -28,24 +72,40 @@ jobs:
             exit 1
           fi
 
-      # Match the project's engines field (Node 24 Active LTS).
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
+      # Agent/worker artifact return-shape contracts.
+      - name: Check agent artifact contracts
+        run: npm run check-contracts
 
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+      - name: Check worker return contracts
+        run: npm run worker-contract-check
 
-      # Single source of truth: the SAME command contributors run locally.
-      # package.json "verify" = lint (eslint-plugin-n, Node-target aware) + typecheck (tsc) + tests (node:test).
-      - name: Verify (npm run verify)
-        run: npm run verify
+      - name: Check artifact graph
+        run: npm run check-artifact-graph
+
+      # Fail if any file in the watched dirs is missing from the artifact allowlist.
+      - name: Check artifact allowlist
+        run: npm run check-artifact-allowlist
+
+      # Fail if docs assert hook events, config keys, or state names that are not
+      # in verified ground truth (E0-6).
+      - name: Check docs/behavior drift
+        run: npm run check-docs-drift
+
+      - name: Check script references
+        run: npm run check-script-refs
+
+      # Fail if any agent/skill/protocol file exceeds its line/token budget.
+      - name: Check per-file budgets
+        run: npm run check-file-budgets
+
+      - name: Check entrypoint guards
+        run: npm run check-entrypoint-guard
+
+      - name: Check contract drift
+        run: npm run check-contract-drift
+
+      - name: Check state writers
+        run: npm run check-state-writers
 
       # Fail if any file hardcodes a non-canonical memory path (E0-5).
       - name: Check canonical memory path references
@@ -58,37 +118,13 @@ jobs:
           node scripts/generate-current-behavior.mjs
           git diff --exit-code -- docs/CURRENT_BEHAVIOR.md
 
-      # Fail if docs assert hook events, config keys, or state names that are not
-      # in verified ground truth (E0-6).
-      - name: Check docs/behavior drift
-        run: node scripts/check-docs-drift.mjs
-
       # Fail if any agent file has a frontmatter/body capability mismatch (E0-7).
       - name: Validate agent capability consistency
         run: node scripts/validate-agents.mjs
 
-      # Fail if any worker-return artifact violates the WorkerReturn contract (E4-8).
-      - name: Check worker return contracts
-        run: npm run worker-contract-check
-
-      - name: Check agent artifact contracts
-        run: npm run check-contracts
-
-      # Live-repo guard wiring (E9-02): every script docs/SCRIPTS.md labels
-      # "CI Guard" must actually run against the repository, not only its
-      # tmpdir unit-test fixtures.
-
-      # Fail if any file in the watched dirs is missing from the artifact allowlist.
-      - name: Check artifact allowlist
-        run: node scripts/check-artifact-allowlist.mjs
-
       # Report backend readiness predicates (skips cleanly when none configured).
       - name: Check backend readiness predicates
         run: node scripts/check-backend-ready.mjs
-
-      # Fail if any agent/skill/protocol file exceeds its line/token budget.
-      - name: Check per-file budgets
-        run: node scripts/check-file-budgets.mjs
 
       # Fail if any sentinel-delimited generated doc block is stale.
       - name: Check generated docs freshness
@@ -105,6 +141,17 @@ jobs:
       # Fail if any skill trigger stub exceeds its line budget.
       - name: Validate skill split
         run: node scripts/validate-skill-split.mjs
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+  evals:
+    name: evals (model-routing + issue-quality + regressions)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       # Fail if any model-routing baseline is missing, malformed, or stale (E9-22).
       - name: Validate model-routing baselines
@@ -141,20 +188,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+      - uses: ./.github/actions/setup
 
       - name: Validate hook command contracts
         run: >-

@@ -23,19 +23,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+      - uses: ./.github/actions/setup
 
       - name: Run the full matrix
         run: node --test test/e2e/transition-matrix.e2e.test.mjs
@@ -48,20 +36,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # Match the project's engines field (Node 24 Active LTS).
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+      - uses: ./.github/actions/setup
 
       # Opt in explicitly. Without a verified judge model in
       # config/model-policy.json (and an API client + secret), verdicts are

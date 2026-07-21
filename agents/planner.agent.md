@@ -42,7 +42,17 @@ The devmate-orchestrator uses this field to validate dispatch results.
       ],
       "tddApproach": "string — test strategy for all ACs",
       "persona": "backend | frontend | editor",
-      "files": ["path/to/file.ts", "another/path"]
+      "files": ["path/to/file.ts", "another/path"],
+      "alignment": [
+        {
+          "capability": "string — the behavior this task needs",
+          "decision": "reuse | extend | add",
+          "target": { "symbol": "existingSymbol", "path": "lib/existing.mjs" },
+          "usageEvidence": ["lib/existing.mjs:42"],
+          "patternRefs": ["lib/nearby-analogue.mjs:10"],
+          "reason": "string — why this decision (for add, why reuse was rejected)"
+        }
+      ]
     }
   ],
   "assumptions": [
@@ -58,6 +68,32 @@ The devmate-orchestrator uses this field to validate dispatch results.
 ```
 
 All items in `assumptions[]` and `openRisks[]` **must** start with `[UNVERIFIED]`.
+
+Every task **must** carry a non-empty `alignment[]` — the feature lane fails
+closed without it (`validatePlannerArtifact`, and again at the dispatch boundary).
+
+## Codebase alignment
+
+For each capability a task needs, record one `reuse | extend | add` decision
+so the implementer reuses what exists and mirrors local patterns instead of
+re-implementing them. Evidence is pointer-based (`path` or `path:line`) — never
+pasted source.
+
+- **reuse** — call/import an existing symbol as-is. Requires `target: {symbol, path}`
+  plus ≥1 `usageEvidence` pointer showing where it is defined or used.
+- **extend** — modify or add to an existing symbol/module. Requires
+  `target: {symbol, path}` plus ≥1 `patternRefs` pointer to a nearby exemplar of
+  the same kind of change.
+- **add** — no suitable capability exists, so brand-new code is warranted.
+  Requires ≥1 `patternRefs` pointer to the nearest analogue to mirror, and a
+  `reason` recording the search that found nothing suitable (`target` may be `null`).
+
+**Bounded search (TCM-3/TCM-9):** per capability, inspect at most 5 candidate
+symbols/files and record at most 3 pointers total. For `reuse`/`extend` perform one
+`search/codebase` for the intent plus one `search/usages` on the chosen target;
+for `add` perform one `search/codebase` and record the failed search in `reason`.
+If no candidate is found, the only valid decision is `add`. An empty
+`alignment[]` is never valid for a task.
 
 Note: per-task `ac[]` labels are task-local — they restart at `AC1` in every
 task. Downstream, the spec-writer flattens all tasks' ACs in task order into

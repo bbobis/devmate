@@ -1,6 +1,7 @@
 {"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:00:00.000Z","schemaVersion":1,"from":"no-lane","to":"lane-set","gate":"lane-set"}
 {"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:01:00.000Z","schemaVersion":1,"from":"lane-set","to":"discovery-done","gate":"discovery-done"}
 {"type":"action","taskId":"traj-eval-task","stepId":"step-1","ts":"2026-07-01T00:02:00.000Z","schemaVersion":1,"actionType":"read_file","path":"docs/PRD.md","digest":"ea030ed91dbda9eb"}
+{"type":"action","taskId":"traj-eval-task","stepId":"step-1b","ts":"2026-07-01T00:02:30.000Z","schemaVersion":1,"actionType":"semantic_search","path":"lib/checkout/cart.mjs","digest":"a1b2c3d4e5f60718"}
 {"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:03:00.000Z","schemaVersion":1,"from":"discovery-done","to":"grill-done","gate":"grill-done"}
 {"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:04:00.000Z","schemaVersion":1,"from":"grill-done","to":"plan-done","gate":"plan-done"}
 {"type":"gate_transition","taskId":"traj-eval-task","stepId":"gatectl","ts":"2026-07-01T00:05:00.000Z","schemaVersion":1,"from":"plan-done","to":"spec-draft","gate":"spec-draft"}

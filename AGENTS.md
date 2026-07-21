@@ -20,7 +20,8 @@ differentiator is **token & context management** — keep it central to every ch
 
 ## Hard rules
 
-1. `npm run verify` must pass before every push — it is exactly what CI runs.
+1. `npm run verify` must pass before every push — CI runs the same checks across
+   parallel jobs (plus extra guards), so it is a superset, not an exact match.
 2. Pure logic lives in `lib/`; `scripts/` and `hooks/` are thin I/O wrappers.
    Executable scripts use the guarded entrypoint pattern and assert Node 24.
 3. Cap tool output at the boundary — return a digest plus a path to the full

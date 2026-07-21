@@ -30,6 +30,7 @@ const INVARIANTS = /** @type {const} */ ([
   'legalTransitionSeq',
   'budgetEventsPresent',
   'boundedToolCalls',
+  'alignmentBeforeImpl',
 ]);
 
 /**
@@ -59,7 +60,7 @@ function assertIsolatedFailure(result, target) {
       `${invariant} expected ${invariant !== target}: ${JSON.stringify(result)}`
     );
   }
-  assert.equal(result.score, 3);
+  assert.equal(result.score, INVARIANTS.length - 1);
 }
 
 test('every fixture event is schema-valid', async () => {
@@ -73,14 +74,15 @@ test('every fixture event is schema-valid', async () => {
   }
 });
 
-test('clean trace scores 4/4', async () => {
+test('clean trace scores 5/5', async () => {
   const { result } = await scoreFixture('clean');
   assert.deepEqual(result, {
     noEditBeforeImpl: true,
     legalTransitionSeq: true,
     budgetEventsPresent: true,
     boundedToolCalls: true,
-    score: 4,
+    alignmentBeforeImpl: true,
+    score: 5,
   });
 });
 
@@ -106,6 +108,16 @@ test('excess tool calls fail boundedToolCalls', async () => {
   const toolCalls = events.filter((e) => e.type === 'action').length;
   assert.ok(toolCalls > TOOL_CALL_CAP, `fixture has ${toolCalls} tool calls vs cap ${TOOL_CALL_CAP}`);
   assertIsolatedFailure(result, 'boundedToolCalls');
+});
+
+test('edit-without-alignment trace fails alignmentBeforeImpl', async () => {
+  const { result, events } = await scoreFixture('edit-without-alignment');
+  // Self-check: the fixture must actually edit source without any prior search,
+  // or the assertion below would be testing nothing.
+  const hasEdit = events.some((e) => e.type === 'action' && /create_file|replace_string/.test(String(e.actionType ?? '')));
+  const hasSearch = events.some((e) => e.type === 'action' && /search/.test(String(e.actionType ?? '')));
+  assert.ok(hasEdit && !hasSearch, 'fixture edits source with no search action');
+  assertIsolatedFailure(result, 'alignmentBeforeImpl');
 });
 
 /* ------------------------------------------------------------------ *

@@ -1,0 +1,50 @@
+{
+  "_comment": "Issue 238: a degraded capture — the 'role-claim guard' add decision carries NO patternRefs, so it is unsatisfied (§3.2). Two of three required capabilities are satisfied → score 0.6667, below the 0.8 threshold, with missing ['role-claim guard']. This is exactly the signal validatePlannerArtifact-passing captures can still hide from a plain AC-coverage eval.",
+  "tasks": [
+    {
+      "description": "Persist the plan artifact and record its digest",
+      "ac": ["AC1: plan.json is written and hashed"],
+      "tddApproach": "Red: assert plan.json + hash, then persist.",
+      "persona": "backend",
+      "files": ["lib/workflow/agents/planner.mjs"],
+      "alignment": [
+        {
+          "capability": "artifact hash persistence",
+          "decision": "reuse",
+          "target": { "symbol": "recordArtifactHash", "path": "lib/task-state.mjs" },
+          "usageEvidence": ["lib/workflow/agents/planner.mjs:321"],
+          "patternRefs": [],
+          "reason": "existing helper already writes artifactHashes[name]; no new writer needed"
+        },
+        {
+          "capability": "gate transition table lookup",
+          "decision": "extend",
+          "target": { "symbol": "isLegalTransition", "path": "lib/gatectl.mjs" },
+          "usageEvidence": [],
+          "patternRefs": ["lib/gate-transitions.mjs:165"],
+          "reason": "extend the frozen table lookup the same way the spine helper does"
+        }
+      ]
+    },
+    {
+      "description": "Fail closed when the role claim is absent",
+      "ac": ["AC2: a user with no role claim is denied"],
+      "tddApproach": "Red: assert denial for a claimless user, then guard.",
+      "persona": "backend",
+      "files": ["src/cursor.mjs"],
+      "alignment": [
+        {
+          "capability": "role-claim guard",
+          "decision": "add",
+          "target": null,
+          "usageEvidence": [],
+          "patternRefs": [],
+          "reason": "no existing guard — but no analogue pattern was recorded"
+        }
+      ]
+    }
+  ],
+  "assumptions": [],
+  "openRisks": [],
+  "unverified": []
+}

@@ -192,7 +192,7 @@ tools: ['search/codebase', 'search/usages', 'read']
 ```
 
 **Input:** Discovery report, design contract, task description  
-**Output:** Implementation plan with `tasks[]` (each task has `description`, `ac[]`, `tddApproach`, `persona`, `files[]`), `assumptions[]`, `openRisks[]`  
+**Output:** Implementation plan with `tasks[]` (each task has `description`, `ac[]`, `tddApproach`, `persona`, `files[]`, and a fail-closed `alignment[]` of `reuse|extend|add` decisions — #238), `assumptions[]`, `openRisks[]`  
 **Disallowed:** Writing product code, forwarding a plan with unresolved `openRisks[]` to spec without a rubber-duck critique pass  
 
 ---
@@ -275,7 +275,7 @@ handoffs:
 ```
 
 **Input:** Bug report, reproduction steps  
-**Output:** `DiagnosisResult` with `bugScope` (persona-from-config or 'unknown'), `suspectedLayer`, `reproCommand`, `fixerRecommendation`, `taskId`, `schemaVersion` (must equal 1), plus the scope boundary fields `allowedPaths[]` and `allowedGlobs[]`; the hook persists those fields to `scope.md`  
+**Output:** `DiagnosisResult` with `bugScope` (persona-from-config or 'unknown'), `suspectedLayer`, `reproCommand`, `fixerRecommendation`, `taskId`, `schemaVersion` (must equal 1), plus the scope boundary fields `allowedPaths[]` and `allowedGlobs[]`; the hook persists those fields to `scope.md`. Optionally carries an advisory `alignment[]` of `reuse|extend|add` decisions for the fix — the feature-lane codebase-alignment contract (#238) extended into the bug lane (#240)  
 **Disallowed:** Writing a fix, guessing root cause without evidence (must tag `[UNVERIFIED]`)  
 
 ---

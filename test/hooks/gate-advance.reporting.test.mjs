@@ -79,6 +79,16 @@ const PLAN_WITH_NO_FILES = {
       tddApproach: 'test first',
       persona: 'backend',
       files: [],
+      alignment: [
+        {
+          capability: 'fixture capability',
+          decision: 'add',
+          target: null,
+          usageEvidence: [],
+          patternRefs: ['lib/index.mjs:1'],
+          reason: 'fixture: nothing suitable to reuse',
+        },
+      ],
     },
   ],
   assumptions: [],

@@ -327,6 +327,53 @@ trusted the same way.
 | Persona edited another persona's file | `persona_scope_violation` | `Persona "backend" edited files outside its territory: src/ui/x.mjs. Revert them, or dispatch the persona that owns those paths.` |
 | `@fullstack` reply declares no `persona` | `persona_missing` | `This @fullstack dispatch returned no persona, so devmate cannot check its edits against a territory. Include the persona you were dispatched with at the top level of your JSON reply.` |
 
+## Analysis-dispatch sequencing (RC-3)
+
+The implementation dispatch is structurally impossible to run out of order — it is
+hard-gated on `impl-started`, unreachable until every upstream gate advanced (see
+[dispatch-gate above](#guard-decision-rules-applied-in-order)). An **analysis**
+dispatch has no such backstop: dispatching `@spec-writer` while the gate is still
+`grill-done` runs the agent, writes `spec.md`, and then the gate cannot advance
+(the `plan-done` precondition `critique-result.json` is absent), so the work is
+wasted with no signal. RC-3 (issue #231) adds a soft guard for exactly that case.
+
+The guard is a pure evaluator (`lib/workflow/dispatch-sequencing.mjs`,
+`evaluateDispatchSequencing`) wired into the PreToolUse gate-guard beside the
+implementation-dispatch check. It compares the current `workflowGate` against the
+dispatched agent's **minimum gate** along the lane's forward spine:
+
+| Lane | Agent | Minimum gate | Missing evidence |
+| --- | --- | --- | --- |
+| feature | `@rubber-duck` (grill) | `discovery-done` | `discovery-merged.json` |
+| feature | `@planner` | `grill-done` | `grill-result.json` |
+| feature | `@spec-writer` | `plan-done` | `critique-result.json` |
+
+The comparison keys on the gate reached, **not** on step order — which is what
+lets every legitimate case pass without an allowlist: same-gate parallel fan-out
+(`@planner` + `@ui-ux`), same-agent re-dispatch during a revision loop, and the
+deliberate backward steering edges (`re-plan`, `revise-scope`, `new-requirements`)
+all leave the gate at-or-after the agent's minimum. `@rubber-duck` needs no `mode`
+discrimination: its later `mode=critique` dispatch sits at `grill-done`, already
+past `discovery-done`, so both modes pass the same test. The bug and chore lanes
+have no mapping — their analysis dispatches sit at `lane-set` with no intermediate
+gate to key on; their ordering is enforced by the diagnosis milestone and the
+scope precondition instead.
+
+The `dispatchSequencing` config mode selects the response, and the guard **fails
+open** on every uncertainty (no task state, an unmapped agent, an off-spine gate),
+because a false positive would block real work:
+
+| Mode | Out-of-order dispatch | Wire shape |
+| --- | --- | --- |
+| `warn` (**default**) | allowed, with a model-visible advisory | `permissionDecision: allow` + `additionalContext` |
+| `block` | denied | `permissionDecision: deny` + `permissionDecisionReason` |
+| `off` | ignored | plain `allow` |
+
+`block` is opt-in for a reason: it assumes the workflow-first ordering devmate
+already follows — the gate advance is persisted before the next dispatch — so the
+comparison reads the gate the upstream artifact produced. `warn` (the default)
+never blocks, so it is safe even where that ordering is not guaranteed.
+
 ## devmate.config.json Format
 
 ```json
